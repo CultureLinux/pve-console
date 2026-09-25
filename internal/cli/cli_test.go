@@ -43,11 +43,11 @@ func TestRunVersionWithDebug(t *testing.T) {
 	}
 }
 
-func TestRunWithoutCommandPrintsUsage(t *testing.T) {
+func TestRunHelpPrintsUsage(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 
-	code := Run(nil, &stdout, &stderr)
+	code := Run([]string{"help"}, &stdout, &stderr)
 
 	if code != 0 {
 		t.Fatalf("expected exit code 0, got %d", code)

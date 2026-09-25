@@ -2,7 +2,7 @@
 
 `pvm` is a lightweight Proxmox CLI manager intended to run locally on a Proxmox VE node.
 
-The project is currently in Sprint 2: local Proxmox read commands backed by `pvesh` JSON.
+The project currently provides local Proxmox read commands, health checks, and an interactive terminal UI backed by `pvesh` JSON.
 
 ## Requirements
 
@@ -44,6 +44,8 @@ $env:CGO_ENABLED="0"
 ## Run
 
 ```bash
+./bin/pvm
+./bin/pvm tui
 ./bin/pvm version
 ./bin/pvm status
 ./bin/pvm vm list
@@ -79,6 +81,8 @@ Core runtime foundations:
 
 Implemented Proxmox read commands:
 
+- `pvm`
+- `pvm tui`
 - `pvm status`
 - `pvm status --json`
 - `pvm vm list`

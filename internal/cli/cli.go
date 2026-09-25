@@ -12,6 +12,7 @@ import (
 	"pvc/internal/command"
 	"pvc/internal/health"
 	"pvc/internal/proxmox"
+	"pvc/internal/ui"
 	"pvc/internal/validate"
 	"pvc/internal/version"
 )
@@ -20,6 +21,7 @@ const usage = `pvm - Proxmox CLI Manager
 
 Usage:
   pvm [global options] <command>
+  pvm
   pvm version
   pvm status [--json]
   pvm vm list [--json]
@@ -32,6 +34,7 @@ Global options:
   --debug         Enable debug output
 
 Commands:
+  tui            Open interactive terminal UI
   version        Print version information
   status         Print node, guest and storage summary
   vm list        List QEMU VMs and LXC containers
@@ -69,8 +72,7 @@ func RunWithOptions(args []string, opts Options, stdout io.Writer, stderr io.Wri
 
 func RunWithClient(args []string, opts Options, client proxmox.Client, stdout io.Writer, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprint(stdout, usage)
-		return 0
+		return runTUI(client, stderr)
 	}
 
 	ctx := context.Background()
@@ -82,6 +84,8 @@ func RunWithClient(args []string, opts Options, client proxmox.Client, stdout io
 		}
 		fmt.Fprintln(stdout, version.String())
 		return 0
+	case "tui":
+		return runTUI(client, stderr)
 	case "status":
 		return runStatus(ctx, client, opts, stdout, stderr)
 	case "vm":
@@ -98,6 +102,13 @@ func RunWithClient(args []string, opts Options, client proxmox.Client, stdout io
 		fmt.Fprint(stderr, usage)
 		return 2
 	}
+}
+
+func runTUI(client proxmox.Client, stderr io.Writer) int {
+	if err := ui.Run(client); err != nil {
+		return printError(stderr, "Unable to run TUI.", err)
+	}
+	return 0
 }
 
 func runCheck(ctx context.Context, client proxmox.Client, opts Options, stdout io.Writer, stderr io.Writer) int {
