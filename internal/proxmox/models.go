@@ -25,11 +25,11 @@ type NodeInfo struct {
 }
 
 type Storage struct {
-	Name    string  `json:"name"`
+	Name    string  `json:"storage"`
 	Type    string  `json:"type"`
 	Used    uint64  `json:"used"`
 	Total   uint64  `json:"total"`
-	Enabled bool    `json:"enabled"`
-	Active  bool    `json:"active"`
+	Enabled Bool    `json:"enabled"`
+	Active  Bool    `json:"active"`
 	Usage   float64 `json:"usage"`
 }
