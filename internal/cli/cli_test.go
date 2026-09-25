@@ -23,6 +23,23 @@ func TestRunVersion(t *testing.T) {
 	}
 }
 
+func TestRunVersionWithDebug(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := Run([]string{"--debug", "version"}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Fatalf("expected exit code 0, got %d", code)
+	}
+	if got := strings.TrimSpace(stdout.String()); got != "pvm dev" {
+		t.Fatalf("expected version output %q, got %q", "pvm dev", got)
+	}
+	if !strings.Contains(stderr.String(), "debug: command=version") {
+		t.Fatalf("expected debug output, got %q", stderr.String())
+	}
+}
+
 func TestRunWithoutCommandPrintsUsage(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -37,6 +54,22 @@ func TestRunWithoutCommandPrintsUsage(t *testing.T) {
 	}
 	if stderr.Len() != 0 {
 		t.Fatalf("expected empty stderr, got %q", stderr.String())
+	}
+}
+
+func TestParseGlobalOptions(t *testing.T) {
+	opts, rest, err := ParseGlobalOptions([]string{"--debug", "vm", "list"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !opts.Debug {
+		t.Fatal("expected debug enabled")
+	}
+	if !opts.Verbose {
+		t.Fatal("expected debug to enable verbose")
+	}
+	if len(rest) != 2 || rest[0] != "vm" || rest[1] != "list" {
+		t.Fatalf("unexpected rest args: %#v", rest)
 	}
 }
 

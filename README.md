@@ -2,7 +2,7 @@
 
 `pvm` is a lightweight Proxmox CLI manager intended to run locally on a Proxmox VE node.
 
-The project is currently in Sprint 0: repository skeleton, Linux amd64 build, and the first `pvm version` command.
+The project is currently in Sprint 1: runtime foundations, command execution abstraction, validations, and the first `pvm version` command.
 
 ## Requirements
 
@@ -47,6 +47,13 @@ $env:CGO_ENABLED="0"
 ./bin/pvm version
 ```
 
+Global options:
+
+```bash
+./bin/pvm --debug version
+./bin/pvm --verbose version
+```
+
 Future Sprint 2 commands:
 
 ```bash
@@ -62,3 +69,11 @@ make test
 make fmt
 make vet
 ```
+
+Core runtime foundations:
+
+- external commands go through `internal/command.Runner`
+- `ExecRunner` uses `exec.CommandContext` with separated arguments
+- command execution has a default timeout
+- stdout, stderr, exit code and duration are captured
+- VMID and snapshot names have strict validation helpers
