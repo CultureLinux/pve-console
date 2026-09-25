@@ -15,15 +15,16 @@ import (
 )
 
 type snapshot struct {
-	node      proxmox.NodeInfo
-	guests    []proxmox.Guest
-	storages  []proxmox.Storage
-	users     []proxmox.User
-	updates   []proxmox.PackageUpdate
-	backups   []proxmox.BackupJob
-	updateErr error
-	backupErr error
-	err       error
+	node          proxmox.NodeInfo
+	guests        []proxmox.Guest
+	storages      []proxmox.Storage
+	users         []proxmox.User
+	updates       []proxmox.PackageUpdate
+	backups       []proxmox.BackupJob
+	backupVolumes []proxmox.BackupVolume
+	updateErr     error
+	backupErr     error
+	err           error
 }
 
 type loadMsg snapshot
@@ -72,6 +73,7 @@ type Model struct {
 	height          int
 	selected        int
 	selectedUser    int
+	selectedBackup  int
 	loading         bool
 	inputMode       inputMode
 	input           string
@@ -81,6 +83,7 @@ type Model struct {
 	sortBy          string
 	showSnaps       bool
 	showConfig      bool
+	backupMode      string
 	snapshotVMState bool
 	snapshotVMID    int
 	configVMID      int
@@ -96,7 +99,7 @@ type Model struct {
 }
 
 func New(client proxmox.Client) Model {
-	return Model{client: client, loading: true, filter: "all", sortBy: "id", viewMode: viewGuests, snapshotVMState: true}
+	return Model{client: client, loading: true, filter: "all", sortBy: "id", viewMode: viewGuests, snapshotVMState: true, backupMode: "volumes"}
 }
 
 func Run(client proxmox.Client) error {
@@ -171,12 +174,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.message = ""
 		case "u":
 			m.toggleView()
+		case "g":
+			m.viewMode = viewGuests
+			m.showConfig = false
+			m.message = ""
 		case "p":
 			m.viewMode = viewUpdates
 			m.message = "package updates"
 		case "b":
 			m.viewMode = viewBackups
 			m.message = "backup jobs"
+		case "tab":
+			if m.viewMode == viewBackups {
+				if m.backupMode == "jobs" {
+					m.backupMode = "volumes"
+				} else {
+					m.backupMode = "jobs"
+				}
+				m.selectedBackup = 0
+			}
 		case "f":
 			m.nextFilter()
 			m.selected = 0
@@ -248,6 +264,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.selectedUser < 0 {
 			m.selectedUser = 0
+		}
+		if m.selectedBackup >= m.backupItemCount() {
+			m.selectedBackup = m.backupItemCount() - 1
+		}
+		if m.selectedBackup < 0 {
+			m.selectedBackup = 0
 		}
 	case tickMsg:
 		if !m.loading {
@@ -372,6 +394,12 @@ func (m Model) load() tea.Msg {
 
 	users, err := m.client.Users(ctx)
 	if err == nil {
+		for i := range users {
+			entries, err := m.client.UserTFA(ctx, users[i].UserID)
+			if err == nil && len(entries) > 0 {
+				users[i].TFAEnabled = true
+			}
+		}
 		s.users = users
 	}
 	updates, err := m.client.PackageUpdates(ctx)
@@ -384,6 +412,12 @@ func (m Model) load() tea.Msg {
 	if err == nil {
 		s.backups = backups
 	} else {
+		s.backupErr = err
+	}
+	backupVolumes, err := m.client.BackupVolumes(ctx, storages)
+	if err == nil {
+		s.backupVolumes = backupVolumes
+	} else if s.backupErr == nil {
 		s.backupErr = err
 	}
 
@@ -546,7 +580,7 @@ func (m Model) userPanel(width int, height int) string {
 	var b strings.Builder
 	b.WriteString(panelTitleStyle.Render("USERS"))
 	b.WriteString("\n")
-	b.WriteString(mutedStyle.Render(fmt.Sprintf("%-28s %-7s %-20s", "USERID", "ENABLED", "EMAIL")))
+	b.WriteString(mutedStyle.Render(fmt.Sprintf("%-28s %-7s %-5s %-20s", "USERID", "ENABLED", "TFA", "EMAIL")))
 	b.WriteString("\n")
 
 	if len(m.data.users) == 0 {
@@ -560,7 +594,7 @@ func (m Model) userPanel(width int, height int) string {
 		end := min(len(m.data.users), start+rows)
 		for i := start; i < end; i++ {
 			user := m.data.users[i]
-			line := fmt.Sprintf("%-28s %-7t %-20s", truncate(user.UserID, 28), bool(user.Enable), truncate(user.Email, 20))
+			line := fmt.Sprintf("%-28s %-7t %-5t %-20s", truncate(user.UserID, 28), bool(user.Enable), user.TFAEnabled, truncate(user.Email, 20))
 			if i == m.selectedUser {
 				b.WriteString(selectedRowStyle.Width(width - 4).Render(line))
 			} else {
@@ -597,20 +631,36 @@ func (m Model) updatesPanel(width int, height int) string {
 
 func (m Model) backupsPanel(width int, height int) string {
 	var b strings.Builder
-	b.WriteString(panelTitleStyle.Render(fmt.Sprintf("BACKUP JOBS (%d)", len(m.data.backups))))
+	if m.backupMode == "jobs" {
+		b.WriteString(panelTitleStyle.Render(fmt.Sprintf("BACKUP JOBS (%d)", len(m.data.backups))))
+	} else {
+		b.WriteString(panelTitleStyle.Render(fmt.Sprintf("BACKUP VOLUMES (%d)", len(m.data.backupVolumes))))
+	}
 	b.WriteString("\n")
-	b.WriteString(mutedStyle.Render(fmt.Sprintf("%-18s %-14s %-18s %-8s %-18s", "ID", "STORAGE", "SCHEDULE", "ENABLED", "VMIDS")))
+	if m.backupMode == "jobs" {
+		b.WriteString(mutedStyle.Render(fmt.Sprintf("%-18s %-14s %-18s %-8s %-18s", "ID", "STORAGE", "SCHEDULE", "ENABLED", "VMIDS")))
+	} else {
+		b.WriteString(mutedStyle.Render(fmt.Sprintf("%-6s %-48s %-10s", "VMID", "VOLID", "SIZE")))
+	}
 	b.WriteString("\n")
 	if m.data.backupErr != nil {
 		b.WriteString(errorStyle.Render(m.data.backupErr.Error()))
-	} else if len(m.data.backups) == 0 {
-		b.WriteString(mutedStyle.Render("no backup jobs"))
+	} else if m.backupItemCount() == 0 {
+		b.WriteString(mutedStyle.Render("no backups found"))
 	} else {
 		rows := max(1, height-5)
-		for i := 0; i < min(len(m.data.backups), rows); i++ {
-			job := m.data.backups[i]
-			line := fmt.Sprintf("%-18s %-14s %-18s %-8t %-18s", truncate(job.ID, 18), truncate(job.Storage, 14), truncate(job.Schedule, 18), bool(job.Enabled), truncate(job.VMID, 18))
-			b.WriteString(rowStyle.Width(width - 4).Render(line))
+		start := 0
+		if m.selectedBackup >= rows {
+			start = m.selectedBackup - rows + 1
+		}
+		end := min(m.backupItemCount(), start+rows)
+		for i := start; i < end; i++ {
+			line := m.backupLine(i)
+			if i == m.selectedBackup {
+				b.WriteString(selectedRowStyle.Width(width - 4).Render(line))
+			} else {
+				b.WriteString(rowStyle.Width(width - 4).Render(line))
+			}
 			b.WriteString("\n")
 		}
 	}
@@ -692,6 +742,7 @@ func (m Model) userDetailPanel(width int, height int) string {
 	if user, ok := m.selectedUserModel(); ok {
 		b.WriteString(kv("User", user.UserID))
 		b.WriteString(kv("Enabled", fmt.Sprintf("%t", bool(user.Enable))))
+		b.WriteString(kv("TFA", fmt.Sprintf("%t", user.TFAEnabled)))
 		b.WriteString(kv("Email", user.Email))
 		b.WriteString(kv("Name", strings.TrimSpace(user.FirstName+" "+user.LastName)))
 		b.WriteString(kv("Comment", user.Comment))
@@ -753,7 +804,25 @@ func (m Model) backupsDetailPanel(width int, height int) string {
 	b.WriteString(panelTitleStyle.Render("BACKUPS"))
 	b.WriteString("\n")
 	b.WriteString(kv("Jobs", fmt.Sprintf("%d", len(m.data.backups))))
-	b.WriteString(kv("Source", "/cluster/backup"))
+	b.WriteString(kv("Volumes", fmt.Sprintf("%d", len(m.data.backupVolumes))))
+	b.WriteString(kv("Mode", m.backupMode))
+	b.WriteString(kv("Toggle", "tab"))
+	b.WriteString("\n")
+	if m.backupMode == "jobs" && len(m.data.backups) > 0 && m.selectedBackup < len(m.data.backups) {
+		job := m.data.backups[m.selectedBackup]
+		b.WriteString(kv("ID", job.ID))
+		b.WriteString(kv("Storage", job.Storage))
+		b.WriteString(kv("Schedule", job.Schedule))
+		b.WriteString(kv("Enabled", fmt.Sprintf("%t", bool(job.Enabled))))
+		b.WriteString(kv("VMIDs", job.VMID))
+	}
+	if m.backupMode != "jobs" && len(m.data.backupVolumes) > 0 && m.selectedBackup < len(m.data.backupVolumes) {
+		volume := m.data.backupVolumes[m.selectedBackup]
+		b.WriteString(kv("VMID", fmt.Sprintf("%d", volume.VMID)))
+		b.WriteString(kv("Format", volume.Format))
+		b.WriteString(kv("Size", humanBytes(volume.Size)))
+		b.WriteString(kv("VolID", volume.VolID))
+	}
 	if m.message != "" {
 		b.WriteString("\n")
 		b.WriteString(mutedStyle.Render(m.message))
@@ -929,6 +998,13 @@ func (m *Model) moveSelection(delta int) {
 		}
 		return
 	}
+	if m.viewMode == viewBackups {
+		next := m.selectedBackup + delta
+		if next >= 0 && next < m.backupItemCount() {
+			m.selectedBackup = next
+		}
+		return
+	}
 
 	next := m.selected + delta
 	if next >= 0 && next < len(m.filteredGuests()) {
@@ -941,6 +1017,22 @@ func (m Model) selectedUserModel() (proxmox.User, bool) {
 		return proxmox.User{}, false
 	}
 	return m.data.users[m.selectedUser], true
+}
+
+func (m Model) backupItemCount() int {
+	if m.backupMode == "jobs" {
+		return len(m.data.backups)
+	}
+	return len(m.data.backupVolumes)
+}
+
+func (m Model) backupLine(index int) string {
+	if m.backupMode == "jobs" {
+		job := m.data.backups[index]
+		return fmt.Sprintf("%-18s %-14s %-18s %-8t %-18s", truncate(job.ID, 18), truncate(job.Storage, 14), truncate(job.Schedule, 18), bool(job.Enabled), truncate(job.VMID, 18))
+	}
+	volume := m.data.backupVolumes[index]
+	return fmt.Sprintf("%-6d %-48s %-10s", volume.VMID, truncate(volume.VolID, 48), humanBytes(volume.Size))
 }
 
 func (m Model) footerText() string {
@@ -958,13 +1050,13 @@ func (m Model) footerText() string {
 		return "search: " + m.input + "  enter apply  esc cancel"
 	}
 	if m.viewMode == viewUsers {
-		return "u guests  p updates  b backups  s load-tfa  x disable-tfa  r refresh  q quit"
+		return "g guests  p updates  b backups  s load-tfa  x disable-tfa  r refresh  q quit"
 	}
 	if m.viewMode == viewUpdates {
-		return "u users  b backups  r refresh  q quit"
+		return "g guests  u users  b backups  r refresh  q quit"
 	}
 	if m.viewMode == viewBackups {
-		return "u users  p updates  r refresh  q quit"
+		return "g guests  tab jobs/volumes  u users  p updates  r refresh  q quit"
 	}
 	return "enter config  u users  p updates  b backups  r refresh  / search  f filter  t sort  s snapshots  n new-snapshot  q quit"
 }

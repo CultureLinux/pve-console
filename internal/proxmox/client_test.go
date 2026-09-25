@@ -136,6 +136,23 @@ func TestParseAptUpdates(t *testing.T) {
 	}
 }
 
+func TestBackupVolumes(t *testing.T) {
+	runner := &command.MockRunner{
+		Responses: map[string]command.Result{
+			"pvesh get /nodes/pve/storage/backup-nas/content -content backup --output-format json": {Stdout: []byte(`[{"volid":"backup-nas:backup/vzdump-qemu-300.vma.zst","vmid":300,"format":"vma.zst","size":1234}]`)},
+		},
+	}
+	client := Client{Runner: runner, Node: "pve"}
+
+	volumes, err := client.BackupVolumes(context.Background(), []Storage{{Name: "backup-nas", Active: true}})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(volumes) != 1 || volumes[0].VMID != 300 {
+		t.Fatalf("unexpected volumes: %#v", volumes)
+	}
+}
+
 func TestUsers(t *testing.T) {
 	runner := &command.MockRunner{
 		Responses: map[string]command.Result{
@@ -150,6 +167,36 @@ func TestUsers(t *testing.T) {
 	}
 	if len(users) != 1 || users[0].UserID != "root@pam" {
 		t.Fatalf("unexpected users: %#v", users)
+	}
+}
+
+func TestUserTFAParsesObjectResponse(t *testing.T) {
+	runner := &command.MockRunner{
+		Responses: map[string]command.Result{
+			"pvesh get /access/users/root@pam/tfa --output-format json": {Stdout: []byte(`{"totp":{"type":"totp","description":"phone"},"webauthn":{"type":"webauthn","description":"key"}}`)},
+		},
+	}
+	client := Client{Runner: runner, Node: "pve"}
+
+	entries, err := client.UserTFA(context.Background(), "root@pam")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 entries, got %#v", entries)
+	}
+	if entries[0].Type == "" || entries[1].Type == "" {
+		t.Fatalf("expected entry types, got %#v", entries)
+	}
+}
+
+func TestUserTFAParsesArrayResponse(t *testing.T) {
+	entries, err := parseTFAEntries([]byte(`[{"id":"totp","type":"totp","description":"phone"}]`))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(entries) != 1 || entries[0].ID != "totp" {
+		t.Fatalf("unexpected entries: %#v", entries)
 	}
 }
 

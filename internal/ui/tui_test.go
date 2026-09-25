@@ -66,10 +66,10 @@ func TestConfigPanelGroupsHardwareDiskAndNetwork(t *testing.T) {
 func TestUserPanelShowsUsers(t *testing.T) {
 	model := New(proxmox.Client{})
 	model.viewMode = viewUsers
-	model.data.users = []proxmox.User{{UserID: "root@pam", Enable: true, Email: "root@example.test"}}
+	model.data.users = []proxmox.User{{UserID: "root@pam", Enable: true, TFAEnabled: true, Email: "root@example.test"}}
 
 	view := model.userPanel(80, 20)
-	for _, want := range []string{"USERS", "root@pam", "root@example.test"} {
+	for _, want := range []string{"USERS", "TFA", "root@pam", "true", "root@example.test"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("expected %q in user panel, got %q", want, view)
 		}
@@ -101,6 +101,7 @@ func TestUpdatesAndBackupsPanels(t *testing.T) {
 	model := New(proxmox.Client{})
 	model.data.updates = []proxmox.PackageUpdate{{Name: "libssl3", Current: "1", Candidate: "2"}}
 	model.data.backups = []proxmox.BackupJob{{ID: "daily", Storage: "backup-nas", Schedule: "03:00", Enabled: true, VMID: "300,302"}}
+	model.data.backupVolumes = []proxmox.BackupVolume{{VMID: 300, VolID: "backup-nas:backup/vzdump-qemu-300.vma.zst", Size: 1024}}
 
 	updates := model.updatesPanel(100, 20)
 	if !strings.Contains(updates, "APT UPDATES (1)") || !strings.Contains(updates, "libssl3") {
@@ -108,7 +109,13 @@ func TestUpdatesAndBackupsPanels(t *testing.T) {
 	}
 
 	backups := model.backupsPanel(100, 20)
-	if !strings.Contains(backups, "BACKUP JOBS (1)") || !strings.Contains(backups, "backup-nas") {
+	if !strings.Contains(backups, "BACKUP VOLUMES (1)") || !strings.Contains(backups, "vzdump-qemu-300") {
 		t.Fatalf("unexpected backups panel: %q", backups)
+	}
+
+	model.backupMode = "jobs"
+	jobs := model.backupsPanel(100, 20)
+	if !strings.Contains(jobs, "BACKUP JOBS (1)") || !strings.Contains(jobs, "backup-nas") {
+		t.Fatalf("unexpected backup jobs panel: %q", jobs)
 	}
 }

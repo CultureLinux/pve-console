@@ -44,13 +44,14 @@ type Snapshot struct {
 type GuestConfig map[string]any
 
 type User struct {
-	UserID    string `json:"userid"`
-	Enable    Bool   `json:"enable"`
-	Expire    int64  `json:"expire,omitempty"`
-	FirstName string `json:"firstname,omitempty"`
-	LastName  string `json:"lastname,omitempty"`
-	Email     string `json:"email,omitempty"`
-	Comment   string `json:"comment,omitempty"`
+	UserID     string `json:"userid"`
+	Enable     Bool   `json:"enable"`
+	TFAEnabled bool   `json:"tfa_enabled"`
+	Expire     int64  `json:"expire,omitempty"`
+	FirstName  string `json:"firstname,omitempty"`
+	LastName   string `json:"lastname,omitempty"`
+	Email      string `json:"email,omitempty"`
+	Comment    string `json:"comment,omitempty"`
 }
 
 type TFAEntry struct {
@@ -75,4 +76,13 @@ type BackupJob struct {
 	VMID     string `json:"vmid,omitempty"`
 	Mode     string `json:"mode,omitempty"`
 	Compress string `json:"compress,omitempty"`
+}
+
+type BackupVolume struct {
+	VolID  string `json:"volid"`
+	VMID   int    `json:"vmid,omitempty"`
+	Format string `json:"format,omitempty"`
+	Size   uint64 `json:"size,omitempty"`
+	CTime  int64  `json:"ctime,omitempty"`
+	Notes  string `json:"notes,omitempty"`
 }

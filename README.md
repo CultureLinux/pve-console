@@ -129,7 +129,9 @@ TUI shortcuts:
 - snapshot prompt `tab`: toggle RAM snapshot, enabled by default for QEMU
 - `u`: toggle users view
 - `p`: package updates view
-- `b`: backup jobs view
+- `b`: backup view, showing existing backup volumes by default
+- backup view `tab`: toggle existing volumes / scheduled jobs
+- `g`: return to VM/LXC view
 - users view `s`: load TFA entries for the selected user
 - users view `x`: disable TFA after typing the selected userid
 - `q`: quit

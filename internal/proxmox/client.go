@@ -169,8 +169,13 @@ func (c Client) Users(ctx context.Context) ([]User, error) {
 }
 
 func (c Client) UserTFA(ctx context.Context, userid string) ([]TFAEntry, error) {
-	var entries []TFAEntry
-	if err := c.pveshJSON(ctx, &entries, "get", fmt.Sprintf("/access/users/%s/tfa", userid), "--output-format", "json"); err != nil {
+	result, err := c.Runner.Run(ctx, "pvesh", "get", fmt.Sprintf("/access/users/%s/tfa", userid), "--output-format", "json")
+	if err != nil {
+		return nil, fmt.Errorf("unable to list TFA entries for user %s: %w", userid, err)
+	}
+
+	entries, err := parseTFAEntries(result.Stdout)
+	if err != nil {
 		return nil, fmt.Errorf("unable to list TFA entries for user %s: %w", userid, err)
 	}
 
@@ -200,6 +205,33 @@ func (c Client) BackupJobs(ctx context.Context) ([]BackupJob, error) {
 		return nil, fmt.Errorf("unable to list backup jobs: %w", err)
 	}
 	return jobs, nil
+}
+
+func (c Client) BackupVolumes(ctx context.Context, storages []Storage) ([]BackupVolume, error) {
+	node, err := c.nodeName()
+	if err != nil {
+		return nil, err
+	}
+
+	volumes := make([]BackupVolume, 0)
+	var lastErr error
+	for _, storage := range storages {
+		if !bool(storage.Active) {
+			continue
+		}
+		var storageVolumes []BackupVolume
+		path := fmt.Sprintf("/nodes/%s/storage/%s/content", node, storage.Name)
+		err := c.pveshJSON(ctx, &storageVolumes, "get", path, "-content", "backup", "--output-format", "json")
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		volumes = append(volumes, storageVolumes...)
+	}
+	if len(volumes) == 0 && lastErr != nil {
+		return nil, fmt.Errorf("unable to list backup volumes: %w", lastErr)
+	}
+	return volumes, nil
 }
 
 func (c Client) guestsByType(ctx context.Context, node string, typ GuestType) ([]Guest, error) {
@@ -283,6 +315,61 @@ func parseAptUpdates(data []byte) []PackageUpdate {
 		}
 	}
 	return updates
+}
+
+func parseTFAEntries(data []byte) ([]TFAEntry, error) {
+	var raw any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("invalid pvesh JSON: %w", err)
+	}
+	return collectTFAEntries(raw, ""), nil
+}
+
+func collectTFAEntries(value any, idHint string) []TFAEntry {
+	switch typed := value.(type) {
+	case []any:
+		entries := make([]TFAEntry, 0, len(typed))
+		for _, item := range typed {
+			entries = append(entries, collectTFAEntries(item, "")...)
+		}
+		return entries
+	case map[string]any:
+		if _, ok := typed["type"]; ok {
+			entry := tfaEntryFromMap(typed)
+			if entry.ID == "" {
+				entry.ID = idHint
+			}
+			return []TFAEntry{entry}
+		}
+
+		entries := make([]TFAEntry, 0)
+		for key, item := range typed {
+			if key == "recovery" {
+				continue
+			}
+			entries = append(entries, collectTFAEntries(item, key)...)
+		}
+		return entries
+	default:
+		return nil
+	}
+}
+
+func tfaEntryFromMap(raw map[string]any) TFAEntry {
+	entry := TFAEntry{}
+	if value, ok := raw["id"].(string); ok {
+		entry.ID = value
+	}
+	if value, ok := raw["type"].(string); ok {
+		entry.Type = value
+	}
+	if value, ok := raw["description"].(string); ok {
+		entry.Description = value
+	}
+	if value, ok := raw["created"].(float64); ok {
+		entry.Created = int64(value)
+	}
+	return entry
 }
 
 func (c Client) pveshJSON(ctx context.Context, target any, args ...string) error {
