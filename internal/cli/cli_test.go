@@ -141,15 +141,30 @@ func TestRunVMStatusRejectsInvalidVMID(t *testing.T) {
 	}
 }
 
+func TestRunCheckJSONReturnsWarnExitCode(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := RunWithClient([]string{"check"}, Options{JSON: true}, testClient(), &stdout, &stderr)
+
+	if code != 1 {
+		t.Fatalf("expected exit code 1 for warn, got %d; stderr=%q", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), `"status": "warn"`) {
+		t.Fatalf("expected warn JSON, got %q", stdout.String())
+	}
+}
+
 func testClient() proxmox.Client {
 	runner := &command.MockRunner{
 		Responses: map[string]command.Result{
 			"pveversion": {Stdout: []byte("pve-manager/9.2.20\n")},
 			"uname -r":   {Stdout: []byte("7.0.14-14-pve\n")},
+			"df -P":      {Stdout: []byte("Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/root 100 70 30 70% /\n")},
 			"pvesh get /nodes/pve/qemu --output-format json":                    {Stdout: []byte(`[{"vmid":300,"name":"vm","status":"running"}]`)},
 			"pvesh get /nodes/pve/lxc --output-format json":                     {Stdout: []byte(`[{"vmid":400,"name":"ct","status":"stopped"}]`)},
 			"pvesh get /nodes/pve/qemu/300/status/current --output-format json": {Stdout: []byte(`{"name":"vm","status":"running"}`)},
-			"pvesh get /nodes/pve/storage --output-format json":                 {Stdout: []byte(`[{"storage":"local","type":"dir","used":25,"total":100,"enabled":true,"active":true}]`)},
+			"pvesh get /nodes/pve/storage --output-format json":                 {Stdout: []byte(`[{"storage":"local","type":"dir","used":85,"total":100,"enabled":true,"active":true}]`)},
 		},
 	}
 

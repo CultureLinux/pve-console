@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 	"text/tabwriter"
 	"time"
 
 	"pvc/internal/command"
+	"pvc/internal/health"
 	"pvc/internal/proxmox"
 	"pvc/internal/validate"
 	"pvc/internal/version"
@@ -23,6 +25,7 @@ Usage:
   pvm vm list [--json]
   pvm vm status <vmid> [--json]
   pvm storage list [--json]
+  pvm check [--json]
 
 Global options:
   -v, --verbose   Enable verbose output
@@ -34,6 +37,7 @@ Commands:
   vm list        List QEMU VMs and LXC containers
   vm status      Print guest status
   storage list   List Proxmox storages
+  check          Run health checks
 `
 
 type Options struct {
@@ -84,6 +88,8 @@ func RunWithClient(args []string, opts Options, client proxmox.Client, stdout io
 		return runVM(ctx, client, args[1:], opts, stdout, stderr)
 	case "storage":
 		return runStorage(ctx, client, args[1:], opts, stdout, stderr)
+	case "check":
+		return runCheck(ctx, client, opts, stdout, stderr)
 	case "help", "--help", "-h":
 		fmt.Fprint(stdout, usage)
 		return 0
@@ -92,6 +98,23 @@ func RunWithClient(args []string, opts Options, client proxmox.Client, stdout io
 		fmt.Fprint(stderr, usage)
 		return 2
 	}
+}
+
+func runCheck(ctx context.Context, client proxmox.Client, opts Options, stdout io.Writer, stderr io.Writer) int {
+	report, err := health.Run(ctx, client, health.DefaultOptions())
+	if err != nil {
+		return printErrorWithCode(stderr, "Unable to run health checks.", err, 3)
+	}
+
+	if opts.JSON {
+		if code := printJSON(stdout, stderr, report); code != 0 {
+			return 3
+		}
+		return health.ExitCode(report.Status)
+	}
+
+	printHealthReport(stdout, report)
+	return health.ExitCode(report.Status)
 }
 
 func ParseGlobalOptions(args []string) (Options, []string, error) {
@@ -236,6 +259,17 @@ func printStorages(w io.Writer, storages []proxmox.Storage) {
 	tw.Flush()
 }
 
+func printHealthReport(w io.Writer, report health.Report) {
+	fmt.Fprintf(w, "NODE %s\n", report.Node)
+	fmt.Fprintf(w, "STATUS %s\n\n", strings.ToUpper(string(report.Status)))
+
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	for _, check := range report.Checks {
+		fmt.Fprintf(tw, "[%s]\t%s\t%s\n", strings.ToUpper(string(check.Status)), check.Name, check.Message)
+	}
+	tw.Flush()
+}
+
 func printJSON(stdout io.Writer, stderr io.Writer, value any) int {
 	encoder := json.NewEncoder(stdout)
 	encoder.SetIndent("", "  ")
@@ -246,7 +280,11 @@ func printJSON(stdout io.Writer, stderr io.Writer, value any) int {
 }
 
 func printError(stderr io.Writer, message string, err error) int {
+	return printErrorWithCode(stderr, message, err, 1)
+}
+
+func printErrorWithCode(stderr io.Writer, message string, err error, code int) int {
 	fmt.Fprintln(stderr, message)
 	fmt.Fprintf(stderr, "\n%s\n", err)
-	return 1
+	return code
 }

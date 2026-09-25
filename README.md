@@ -49,6 +49,7 @@ $env:CGO_ENABLED="0"
 ./bin/pvm vm list
 ./bin/pvm vm status 300
 ./bin/pvm storage list
+./bin/pvm check
 ```
 
 Global options:
@@ -57,6 +58,7 @@ Global options:
 ./bin/pvm --debug version
 ./bin/pvm --verbose version
 ./bin/pvm --json status
+./bin/pvm --json check
 ```
 
 ## Development
@@ -85,3 +87,19 @@ Implemented Proxmox read commands:
 - `pvm vm status <vmid> --json`
 - `pvm storage list`
 - `pvm storage list --json`
+
+Implemented health checks:
+
+- `pvm check`
+- `pvm check --json`
+- node version/kernel presence
+- filesystem usage from `df -P`
+- storage usage and active state
+- guest running/stopped summary
+
+`pvm check` exit codes:
+
+- `0`: OK or INFO only
+- `1`: WARN
+- `2`: FAIL
+- `3`: internal error
