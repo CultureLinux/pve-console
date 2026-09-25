@@ -33,3 +33,10 @@ type Storage struct {
 	Active  Bool    `json:"active"`
 	Usage   float64 `json:"usage"`
 }
+
+type Snapshot struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	SnapTime    int64  `json:"snaptime,omitempty"`
+	VMState     Bool   `json:"vmstate,omitempty"`
+}

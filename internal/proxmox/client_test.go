@@ -67,3 +67,40 @@ func TestStoragesComputesUsage(t *testing.T) {
 		t.Fatalf("unexpected storage: %#v", storages[0])
 	}
 }
+
+func TestSnapshotsFallsBackToLXC(t *testing.T) {
+	runner := &command.MockRunner{
+		Responses: map[string]command.Result{
+			"pvesh get /nodes/pve/lxc/400/snapshot --output-format json": {Stdout: []byte(`[{"name":"before-upgrade","description":"Before upgrade"}]`)},
+		},
+		Errors: map[string]error{
+			"pvesh get /nodes/pve/qemu/400/snapshot --output-format json": command.CommandError{Result: command.Result{Command: "pvesh", ExitCode: 255}},
+		},
+	}
+	client := Client{Runner: runner, Node: "pve"}
+
+	snapshots, err := client.Snapshots(context.Background(), 400)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(snapshots) != 1 || snapshots[0].Name != "before-upgrade" {
+		t.Fatalf("unexpected snapshots: %#v", snapshots)
+	}
+}
+
+func TestCreateSnapshotUsesQEMUFirst(t *testing.T) {
+	runner := &command.MockRunner{
+		Responses: map[string]command.Result{
+			"pvesh create /nodes/pve/qemu/300/snapshot -snapname test -description hello": {},
+		},
+	}
+	client := Client{Runner: runner, Node: "pve"}
+
+	err := client.CreateSnapshot(context.Background(), 300, "test", "hello")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(runner.Calls) != 1 {
+		t.Fatalf("expected 1 call, got %#v", runner.Calls)
+	}
+}

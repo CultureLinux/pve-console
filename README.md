@@ -52,6 +52,8 @@ $env:CGO_ENABLED="0"
 ./bin/pvm vm status 300
 ./bin/pvm storage list
 ./bin/pvm check
+./bin/pvm snapshot list 300
+./bin/pvm snapshot create 300 before-upgrade --description "Before upgrade"
 ```
 
 Global options:
@@ -91,6 +93,10 @@ Implemented Proxmox read commands:
 - `pvm vm status <vmid> --json`
 - `pvm storage list`
 - `pvm storage list --json`
+- `pvm snapshot list <vmid>`
+- `pvm snapshot list <vmid> --json`
+- `pvm snapshot create <vmid> [name]`
+- `pvm snapshot create <vmid> [name] --description <text>`
 
 Implemented health checks:
 
@@ -107,3 +113,15 @@ Implemented health checks:
 - `1`: WARN
 - `2`: FAIL
 - `3`: internal error
+
+TUI shortcuts:
+
+- `j/k` or arrow keys: select guest
+- `/`: search by VMID or name
+- `f`: cycle all/running/stopped
+- `t`: cycle sort by ID/name/status
+- `c`: clear search
+- `r`: refresh
+- `s`: load snapshots for the selected guest
+- `n`: create a timestamped snapshot for the selected guest
+- `q`: quit
