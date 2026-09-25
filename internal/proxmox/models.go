@@ -40,3 +40,39 @@ type Snapshot struct {
 	SnapTime    int64  `json:"snaptime,omitempty"`
 	VMState     Bool   `json:"vmstate,omitempty"`
 }
+
+type GuestConfig map[string]any
+
+type User struct {
+	UserID    string `json:"userid"`
+	Enable    Bool   `json:"enable"`
+	Expire    int64  `json:"expire,omitempty"`
+	FirstName string `json:"firstname,omitempty"`
+	LastName  string `json:"lastname,omitempty"`
+	Email     string `json:"email,omitempty"`
+	Comment   string `json:"comment,omitempty"`
+}
+
+type TFAEntry struct {
+	ID          string `json:"id"`
+	Type        string `json:"type"`
+	Description string `json:"description,omitempty"`
+	Created     int64  `json:"created,omitempty"`
+}
+
+type PackageUpdate struct {
+	Name      string `json:"name"`
+	Current   string `json:"current,omitempty"`
+	Candidate string `json:"candidate,omitempty"`
+	Suite     string `json:"suite,omitempty"`
+}
+
+type BackupJob struct {
+	ID       string `json:"id,omitempty"`
+	Storage  string `json:"storage,omitempty"`
+	Schedule string `json:"schedule,omitempty"`
+	Enabled  Bool   `json:"enabled,omitempty"`
+	VMID     string `json:"vmid,omitempty"`
+	Mode     string `json:"mode,omitempty"`
+	Compress string `json:"compress,omitempty"`
+}

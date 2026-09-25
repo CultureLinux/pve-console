@@ -117,11 +117,19 @@ Implemented health checks:
 TUI shortcuts:
 
 - `j/k` or arrow keys: select guest
+- `enter`: open selected guest configuration
+- `esc`: close configuration view or quit
 - `/`: search by VMID or name
 - `f`: cycle all/running/stopped
 - `t`: cycle sort by ID/name/status
 - `c`: clear search
 - `r`: refresh
 - `s`: load snapshots for the selected guest
-- `n`: create a timestamped snapshot for the selected guest
+- `n`: create a named snapshot for the selected guest
+- snapshot prompt `tab`: toggle RAM snapshot, enabled by default for QEMU
+- `u`: toggle users view
+- `p`: package updates view
+- `b`: backup jobs view
+- users view `s`: load TFA entries for the selected user
+- users view `x`: disable TFA after typing the selected userid
 - `q`: quit

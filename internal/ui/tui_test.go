@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"strings"
 	"testing"
 
 	"pvc/internal/proxmox"
@@ -40,5 +41,74 @@ func TestNextFilter(t *testing.T) {
 	model.nextFilter()
 	if model.filter != "all" {
 		t.Fatalf("expected all, got %q", model.filter)
+	}
+}
+
+func TestConfigPanelGroupsHardwareDiskAndNetwork(t *testing.T) {
+	model := New(proxmox.Client{})
+	model.showConfig = true
+	model.configVMID = 300
+	model.config = proxmox.GuestConfig{
+		"cores":  2,
+		"memory": 4096,
+		"scsi0":  "local-lvm:vm-300-disk-0,size=32G",
+		"net0":   "virtio=AA:BB:CC,bridge=vmbr0",
+	}
+
+	view := model.configPanel(80, 30)
+	for _, want := range []string{"HARDWARE", "DISKS", "NETWORK", "cores", "scsi0", "net0"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected %q in config panel, got %q", want, view)
+		}
+	}
+}
+
+func TestUserPanelShowsUsers(t *testing.T) {
+	model := New(proxmox.Client{})
+	model.viewMode = viewUsers
+	model.data.users = []proxmox.User{{UserID: "root@pam", Enable: true, Email: "root@example.test"}}
+
+	view := model.userPanel(80, 20)
+	for _, want := range []string{"USERS", "root@pam", "root@example.test"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected %q in user panel, got %q", want, view)
+		}
+	}
+}
+
+func TestFooterShowsDisableTFAConfirmation(t *testing.T) {
+	model := New(proxmox.Client{})
+	model.inputMode = inputDisableTFA
+	model.input = "root@pam"
+
+	if got := model.footerText(); !strings.Contains(got, "disable TFA") || !strings.Contains(got, "root@pam") {
+		t.Fatalf("unexpected footer: %q", got)
+	}
+}
+
+func TestFooterShowsSnapshotRAMToggle(t *testing.T) {
+	model := New(proxmox.Client{})
+	model.inputMode = inputSnapshot
+	model.input = "before-upgrade"
+
+	got := model.footerText()
+	if !strings.Contains(got, "ram:on") || !strings.Contains(got, "before-upgrade") {
+		t.Fatalf("unexpected footer: %q", got)
+	}
+}
+
+func TestUpdatesAndBackupsPanels(t *testing.T) {
+	model := New(proxmox.Client{})
+	model.data.updates = []proxmox.PackageUpdate{{Name: "libssl3", Current: "1", Candidate: "2"}}
+	model.data.backups = []proxmox.BackupJob{{ID: "daily", Storage: "backup-nas", Schedule: "03:00", Enabled: true, VMID: "300,302"}}
+
+	updates := model.updatesPanel(100, 20)
+	if !strings.Contains(updates, "APT UPDATES (1)") || !strings.Contains(updates, "libssl3") {
+		t.Fatalf("unexpected updates panel: %q", updates)
+	}
+
+	backups := model.backupsPanel(100, 20)
+	if !strings.Contains(backups, "BACKUP JOBS (1)") || !strings.Contains(backups, "backup-nas") {
+		t.Fatalf("unexpected backups panel: %q", backups)
 	}
 }

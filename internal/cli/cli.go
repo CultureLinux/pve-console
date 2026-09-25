@@ -150,7 +150,7 @@ func runSnapshot(ctx context.Context, client proxmox.Client, args []string, opts
 			return printError(stderr, "Invalid snapshot options.", err)
 		}
 
-		if err := client.CreateSnapshot(ctx, vmid, name, description); err != nil {
+		if err := client.CreateSnapshot(ctx, vmid, name, description, false); err != nil {
 			return printError(stderr, fmt.Sprintf("Unable to create snapshot for guest %d.", vmid), err)
 		}
 

@@ -11,13 +11,19 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"pvc/internal/proxmox"
+	"pvc/internal/validate"
 )
 
 type snapshot struct {
-	node     proxmox.NodeInfo
-	guests   []proxmox.Guest
-	storages []proxmox.Storage
-	err      error
+	node      proxmox.NodeInfo
+	guests    []proxmox.Guest
+	storages  []proxmox.Storage
+	users     []proxmox.User
+	updates   []proxmox.PackageUpdate
+	backups   []proxmox.BackupJob
+	updateErr error
+	backupErr error
+	err       error
 }
 
 type loadMsg snapshot
@@ -32,27 +38,65 @@ type createSnapshotMsg struct {
 	name string
 	err  error
 }
+type configMsg struct {
+	vmid   int
+	config proxmox.GuestConfig
+	err    error
+}
+type userTFAMsg struct {
+	userid  string
+	entries []proxmox.TFAEntry
+	err     error
+}
+type disableTFAMsg struct {
+	userid string
+	err    error
+}
+
+type inputMode string
+
+const (
+	inputNone       inputMode = ""
+	inputSearch     inputMode = "search"
+	inputSnapshot   inputMode = "snapshot"
+	inputDisableTFA inputMode = "disable-tfa"
+	viewGuests      string    = "guests"
+	viewUsers       string    = "users"
+	viewUpdates     string    = "updates"
+	viewBackups     string    = "backups"
+)
 
 type Model struct {
-	client       proxmox.Client
-	width        int
-	height       int
-	selected     int
-	loading      bool
-	searching    bool
-	query        string
-	filter       string
-	sortBy       string
-	showSnaps    bool
-	snapshotVMID int
-	snapshots    []proxmox.Snapshot
-	snapErr      error
-	message      string
-	data         snapshot
+	client          proxmox.Client
+	width           int
+	height          int
+	selected        int
+	selectedUser    int
+	loading         bool
+	inputMode       inputMode
+	input           string
+	viewMode        string
+	query           string
+	filter          string
+	sortBy          string
+	showSnaps       bool
+	showConfig      bool
+	snapshotVMState bool
+	snapshotVMID    int
+	configVMID      int
+	snapshots       []proxmox.Snapshot
+	snapErr         error
+	config          proxmox.GuestConfig
+	configErr       error
+	tfaUserID       string
+	tfaEntries      []proxmox.TFAEntry
+	tfaErr          error
+	message         string
+	data            snapshot
 }
 
 func New(client proxmox.Client) Model {
-	return Model{client: client, loading: true, filter: "all", sortBy: "id"}
+	return Model{client: client, loading: true, filter: "all", sortBy: "id", viewMode: viewGuests, snapshotVMState: true}
 }
 
 func Run(client proxmox.Client) error {
@@ -71,33 +115,68 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 	case tea.KeyMsg:
-		if m.searching {
+		if m.inputMode != inputNone {
 			switch msg.String() {
 			case "esc":
-				m.searching = false
+				m.inputMode = inputNone
+				m.input = ""
 			case "enter":
-				m.searching = false
-				m.selected = 0
+				return m.handleInputSubmit()
+			case "tab", " ":
+				if m.inputMode == inputSnapshot {
+					m.snapshotVMState = !m.snapshotVMState
+					return m, nil
+				}
+				if len(msg.String()) == 1 {
+					m.input += msg.String()
+				}
 			case "backspace":
-				if len(m.query) > 0 {
-					m.query = m.query[:len(m.query)-1]
-					m.selected = 0
+				if len(m.input) > 0 {
+					m.input = m.input[:len(m.input)-1]
 				}
 			default:
 				if len(msg.String()) == 1 {
-					m.query += msg.String()
-					m.selected = 0
+					m.input += msg.String()
 				}
 			}
 			return m, nil
 		}
 
 		switch msg.String() {
-		case "q", "ctrl+c", "esc":
+		case "q", "ctrl+c":
 			return m, tea.Quit
+		case "esc":
+			if m.showConfig {
+				m.showConfig = false
+				m.message = ""
+				return m, nil
+			}
+			return m, tea.Quit
+		case "enter":
+			if m.viewMode == viewUsers {
+				return m, nil
+			}
+			guest, ok := m.selectedGuest()
+			if ok {
+				m.showConfig = true
+				m.configVMID = guest.VMID
+				m.config = nil
+				m.configErr = nil
+				m.message = fmt.Sprintf("loading config for %d", guest.VMID)
+				return m, m.loadConfig(guest.VMID)
+			}
 		case "/":
-			m.searching = true
+			m.inputMode = inputSearch
+			m.input = m.query
 			m.message = ""
+		case "u":
+			m.toggleView()
+		case "p":
+			m.viewMode = viewUpdates
+			m.message = "package updates"
+		case "b":
+			m.viewMode = viewBackups
+			m.message = "backup jobs"
 		case "f":
 			m.nextFilter()
 			m.selected = 0
@@ -108,17 +187,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.query = ""
 			m.selected = 0
 		case "up", "k":
-			if m.selected > 0 {
-				m.selected--
-			}
+			m.moveSelection(-1)
 		case "down", "j":
-			if m.selected < len(m.filteredGuests())-1 {
-				m.selected++
-			}
+			m.moveSelection(1)
 		case "r":
 			m.loading = true
 			return m, m.load
 		case "s":
+			if m.viewMode == viewUsers {
+				user, ok := m.selectedUserModel()
+				if ok {
+					m.tfaUserID = user.UserID
+					m.tfaEntries = nil
+					m.tfaErr = nil
+					m.message = fmt.Sprintf("loading TFA for %s", user.UserID)
+					return m, m.loadUserTFA(user.UserID)
+				}
+				return m, nil
+			}
 			guest, ok := m.selectedGuest()
 			if ok {
 				m.showSnaps = true
@@ -129,11 +215,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.loadSnapshots(guest.VMID)
 			}
 		case "n":
+			if m.viewMode == viewUsers {
+				return m, nil
+			}
 			guest, ok := m.selectedGuest()
 			if ok {
-				name := "manual-" + time.Now().Format("20060102-150405")
-				m.message = fmt.Sprintf("creating snapshot %s for %d", name, guest.VMID)
-				return m, m.createSnapshot(guest.VMID, name)
+				m.inputMode = inputSnapshot
+				m.input = ""
+				m.message = fmt.Sprintf("snapshot base name for %d, enter for manual", guest.VMID)
+			}
+		case "x":
+			if m.viewMode == viewUsers {
+				user, ok := m.selectedUserModel()
+				if ok {
+					m.inputMode = inputDisableTFA
+					m.input = ""
+					m.message = fmt.Sprintf("type %s to disable TFA", user.UserID)
+				}
 			}
 		}
 	case loadMsg:
@@ -144,6 +242,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.selected < 0 {
 			m.selected = 0
+		}
+		if m.selectedUser >= len(m.data.users) {
+			m.selectedUser = len(m.data.users) - 1
+		}
+		if m.selectedUser < 0 {
+			m.selectedUser = 0
 		}
 	case tickMsg:
 		if !m.loading {
@@ -170,6 +274,34 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.snapshotVMID = msg.vmid
 			return m, m.loadSnapshots(msg.vmid)
 		}
+	case configMsg:
+		if msg.vmid == m.configVMID {
+			m.config = msg.config
+			m.configErr = msg.err
+			if msg.err != nil {
+				m.message = msg.err.Error()
+			} else {
+				m.message = fmt.Sprintf("config loaded for %d", msg.vmid)
+			}
+		}
+	case userTFAMsg:
+		if msg.userid == m.tfaUserID {
+			m.tfaEntries = msg.entries
+			m.tfaErr = msg.err
+			if msg.err != nil {
+				m.message = msg.err.Error()
+			} else {
+				m.message = fmt.Sprintf("%d TFA entries for %s", len(msg.entries), msg.userid)
+			}
+		}
+	case disableTFAMsg:
+		if msg.err != nil {
+			m.message = msg.err.Error()
+		} else {
+			m.message = fmt.Sprintf("TFA disabled for %s", msg.userid)
+			m.tfaUserID = msg.userid
+			return m, m.loadUserTFA(msg.userid)
+		}
 	}
 
 	return m, nil
@@ -191,12 +323,25 @@ func (m Model) View() string {
 
 	header := m.header(contentWidth)
 	bodyHeight := max(10, height-6)
-	left := m.guestPanel(leftWidth, bodyHeight)
+	left := m.leftPanel(leftWidth, bodyHeight)
 	right := m.detailPanel(rightWidth, bodyHeight)
 	body := lipgloss.JoinHorizontal(lipgloss.Top, left, "  ", right)
-	footer := footerStyle.Width(contentWidth).Render("q quit  r refresh  / search  f filter  t sort  s snapshots  n new-snapshot")
+	footer := footerStyle.Width(contentWidth).Render(m.footerText())
 
 	return lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
+}
+
+func (m Model) leftPanel(width int, height int) string {
+	if m.viewMode == viewUsers {
+		return m.userPanel(width, height)
+	}
+	if m.viewMode == viewUpdates {
+		return m.updatesPanel(width, height)
+	}
+	if m.viewMode == viewBackups {
+		return m.backupsPanel(width, height)
+	}
+	return m.guestPanel(width, height)
 }
 
 func (m Model) load() tea.Msg {
@@ -225,6 +370,23 @@ func (m Model) load() tea.Msg {
 	}
 	s.storages = storages
 
+	users, err := m.client.Users(ctx)
+	if err == nil {
+		s.users = users
+	}
+	updates, err := m.client.PackageUpdates(ctx)
+	if err == nil {
+		s.updates = updates
+	} else {
+		s.updateErr = err
+	}
+	backups, err := m.client.BackupJobs(ctx)
+	if err == nil {
+		s.backups = backups
+	} else {
+		s.backupErr = err
+	}
+
 	return loadMsg(s)
 }
 
@@ -241,8 +403,76 @@ func (m Model) createSnapshot(vmid int, name string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		err := m.client.CreateSnapshot(ctx, vmid, name, "Created from pvm TUI")
+		err := m.client.CreateSnapshot(ctx, vmid, name, "Created from pvm TUI", m.snapshotVMState)
 		return createSnapshotMsg{vmid: vmid, name: name, err: err}
+	}
+}
+
+func (m Model) loadUserTFA(userid string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+		defer cancel()
+		entries, err := m.client.UserTFA(ctx, userid)
+		return userTFAMsg{userid: userid, entries: entries, err: err}
+	}
+}
+
+func (m Model) disableUserTFA(userid string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		err := m.client.DisableUserTFA(ctx, userid)
+		return disableTFAMsg{userid: userid, err: err}
+	}
+}
+
+func (m Model) handleInputSubmit() (tea.Model, tea.Cmd) {
+	input := strings.TrimSpace(m.input)
+	mode := m.inputMode
+	m.inputMode = inputNone
+	m.input = ""
+
+	switch mode {
+	case inputSearch:
+		m.query = input
+		m.selected = 0
+	case inputSnapshot:
+		guest, ok := m.selectedGuest()
+		if !ok {
+			return m, nil
+		}
+		if input == "" {
+			input = "manual-" + time.Now().Format("20060102-150405")
+		}
+		name := input
+		if err := validate.SnapshotName(name); err != nil {
+			m.message = err.Error()
+			return m, nil
+		}
+		m.message = fmt.Sprintf("creating snapshot %s for %d", name, guest.VMID)
+		return m, m.createSnapshot(guest.VMID, name)
+	case inputDisableTFA:
+		user, ok := m.selectedUserModel()
+		if !ok {
+			return m, nil
+		}
+		if input != user.UserID {
+			m.message = "confirmation mismatch"
+			return m, nil
+		}
+		m.message = fmt.Sprintf("disabling TFA for %s", user.UserID)
+		return m, m.disableUserTFA(user.UserID)
+	}
+
+	return m, nil
+}
+
+func (m Model) loadConfig(vmid int) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+		defer cancel()
+		config, err := m.client.GuestConfig(ctx, vmid)
+		return configMsg{vmid: vmid, config: config, err: err}
 	}
 }
 
@@ -262,9 +492,12 @@ func (m Model) header(width int) string {
 	if meta == "" {
 		meta = "Proxmox"
 	}
-	meta += fmt.Sprintf(" | filter:%s sort:%s", m.filter, m.sortBy)
+	meta += fmt.Sprintf(" | view:%s filter:%s sort:%s updates:%d", m.viewMode, m.filter, m.sortBy, len(m.data.updates))
 	if m.query != "" {
 		meta += " | search:" + m.query
+	}
+	if m.inputMode != inputNone {
+		meta += fmt.Sprintf(" | %s:%s", m.inputMode, m.input)
 	}
 	if m.loading {
 		meta += " | refreshing"
@@ -309,7 +542,95 @@ func (m Model) guestPanel(width int, height int) string {
 	return panelStyle.Width(width).Height(height).Render(b.String())
 }
 
+func (m Model) userPanel(width int, height int) string {
+	var b strings.Builder
+	b.WriteString(panelTitleStyle.Render("USERS"))
+	b.WriteString("\n")
+	b.WriteString(mutedStyle.Render(fmt.Sprintf("%-28s %-7s %-20s", "USERID", "ENABLED", "EMAIL")))
+	b.WriteString("\n")
+
+	if len(m.data.users) == 0 {
+		b.WriteString(mutedStyle.Render("no users loaded"))
+	} else {
+		rows := max(1, height-5)
+		start := 0
+		if m.selectedUser >= rows {
+			start = m.selectedUser - rows + 1
+		}
+		end := min(len(m.data.users), start+rows)
+		for i := start; i < end; i++ {
+			user := m.data.users[i]
+			line := fmt.Sprintf("%-28s %-7t %-20s", truncate(user.UserID, 28), bool(user.Enable), truncate(user.Email, 20))
+			if i == m.selectedUser {
+				b.WriteString(selectedRowStyle.Width(width - 4).Render(line))
+			} else {
+				b.WriteString(rowStyle.Width(width - 4).Render(line))
+			}
+			b.WriteString("\n")
+		}
+	}
+
+	return panelStyle.Width(width).Height(height).Render(b.String())
+}
+
+func (m Model) updatesPanel(width int, height int) string {
+	var b strings.Builder
+	b.WriteString(panelTitleStyle.Render(fmt.Sprintf("APT UPDATES (%d)", len(m.data.updates))))
+	b.WriteString("\n")
+	b.WriteString(mutedStyle.Render(fmt.Sprintf("%-28s %-18s %-18s", "PACKAGE", "CURRENT", "CANDIDATE")))
+	b.WriteString("\n")
+	if m.data.updateErr != nil {
+		b.WriteString(errorStyle.Render(m.data.updateErr.Error()))
+	} else if len(m.data.updates) == 0 {
+		b.WriteString(okStyle.Render("system up to date"))
+	} else {
+		rows := max(1, height-5)
+		for i := 0; i < min(len(m.data.updates), rows); i++ {
+			update := m.data.updates[i]
+			line := fmt.Sprintf("%-28s %-18s %-18s", truncate(update.Name, 28), truncate(update.Current, 18), truncate(update.Candidate, 18))
+			b.WriteString(rowStyle.Width(width - 4).Render(line))
+			b.WriteString("\n")
+		}
+	}
+	return panelStyle.Width(width).Height(height).Render(b.String())
+}
+
+func (m Model) backupsPanel(width int, height int) string {
+	var b strings.Builder
+	b.WriteString(panelTitleStyle.Render(fmt.Sprintf("BACKUP JOBS (%d)", len(m.data.backups))))
+	b.WriteString("\n")
+	b.WriteString(mutedStyle.Render(fmt.Sprintf("%-18s %-14s %-18s %-8s %-18s", "ID", "STORAGE", "SCHEDULE", "ENABLED", "VMIDS")))
+	b.WriteString("\n")
+	if m.data.backupErr != nil {
+		b.WriteString(errorStyle.Render(m.data.backupErr.Error()))
+	} else if len(m.data.backups) == 0 {
+		b.WriteString(mutedStyle.Render("no backup jobs"))
+	} else {
+		rows := max(1, height-5)
+		for i := 0; i < min(len(m.data.backups), rows); i++ {
+			job := m.data.backups[i]
+			line := fmt.Sprintf("%-18s %-14s %-18s %-8t %-18s", truncate(job.ID, 18), truncate(job.Storage, 14), truncate(job.Schedule, 18), bool(job.Enabled), truncate(job.VMID, 18))
+			b.WriteString(rowStyle.Width(width - 4).Render(line))
+			b.WriteString("\n")
+		}
+	}
+	return panelStyle.Width(width).Height(height).Render(b.String())
+}
+
 func (m Model) detailPanel(width int, height int) string {
+	if m.viewMode == viewUsers {
+		return m.userDetailPanel(width, height)
+	}
+	if m.viewMode == viewUpdates {
+		return m.updatesDetailPanel(width, height)
+	}
+	if m.viewMode == viewBackups {
+		return m.backupsDetailPanel(width, height)
+	}
+	if m.showConfig {
+		return m.configPanel(width, height)
+	}
+
 	var b strings.Builder
 	b.WriteString(panelTitleStyle.Render("DETAIL"))
 	b.WriteString("\n")
@@ -361,6 +682,173 @@ func (m Model) detailPanel(width int, height int) string {
 	}
 
 	return panelStyle.Width(width).Height(height).Render(b.String())
+}
+
+func (m Model) userDetailPanel(width int, height int) string {
+	var b strings.Builder
+	b.WriteString(panelTitleStyle.Render("USER"))
+	b.WriteString("\n")
+
+	if user, ok := m.selectedUserModel(); ok {
+		b.WriteString(kv("User", user.UserID))
+		b.WriteString(kv("Enabled", fmt.Sprintf("%t", bool(user.Enable))))
+		b.WriteString(kv("Email", user.Email))
+		b.WriteString(kv("Name", strings.TrimSpace(user.FirstName+" "+user.LastName)))
+		b.WriteString(kv("Comment", user.Comment))
+	} else {
+		b.WriteString(mutedStyle.Render("Select a user"))
+		b.WriteString("\n")
+	}
+
+	b.WriteString("\n")
+	b.WriteString(panelTitleStyle.Render("TFA"))
+	b.WriteString("\n")
+	if m.tfaErr != nil {
+		b.WriteString(errorStyle.Render(m.tfaErr.Error()))
+		b.WriteString("\n")
+	} else if m.tfaUserID == "" {
+		b.WriteString(mutedStyle.Render("press s to load TFA entries"))
+		b.WriteString("\n")
+	} else if len(m.tfaEntries) == 0 {
+		b.WriteString(mutedStyle.Render("no TFA entries"))
+		b.WriteString("\n")
+	} else {
+		for _, entry := range m.tfaEntries {
+			line := fmt.Sprintf("%s %s %s", entry.ID, entry.Type, entry.Description)
+			b.WriteString(truncate(line, max(8, width-8)))
+			b.WriteString("\n")
+		}
+	}
+
+	b.WriteString("\n")
+	b.WriteString(warnStyle.Render("x disable TFA, confirm with userid"))
+	b.WriteString("\n")
+	if m.message != "" {
+		b.WriteString("\n")
+		b.WriteString(mutedStyle.Render(m.message))
+		b.WriteString("\n")
+	}
+
+	return panelStyle.Width(width).Height(height).Render(b.String())
+}
+
+func (m Model) updatesDetailPanel(width int, height int) string {
+	var b strings.Builder
+	b.WriteString(panelTitleStyle.Render("APT"))
+	b.WriteString("\n")
+	b.WriteString(kv("Updates", fmt.Sprintf("%d", len(m.data.updates))))
+	if len(m.data.updates) > 0 {
+		b.WriteString(kv("Action", "apt update && apt upgrade"))
+	}
+	if m.message != "" {
+		b.WriteString("\n")
+		b.WriteString(mutedStyle.Render(m.message))
+		b.WriteString("\n")
+	}
+	return panelStyle.Width(width).Height(height).Render(b.String())
+}
+
+func (m Model) backupsDetailPanel(width int, height int) string {
+	var b strings.Builder
+	b.WriteString(panelTitleStyle.Render("BACKUPS"))
+	b.WriteString("\n")
+	b.WriteString(kv("Jobs", fmt.Sprintf("%d", len(m.data.backups))))
+	b.WriteString(kv("Source", "/cluster/backup"))
+	if m.message != "" {
+		b.WriteString("\n")
+		b.WriteString(mutedStyle.Render(m.message))
+		b.WriteString("\n")
+	}
+	return panelStyle.Width(width).Height(height).Render(b.String())
+}
+
+func (m Model) configPanel(width int, height int) string {
+	var b strings.Builder
+	b.WriteString(panelTitleStyle.Render(fmt.Sprintf("CONFIG %d", m.configVMID)))
+	b.WriteString("\n")
+	b.WriteString(mutedStyle.Render("esc back"))
+	b.WriteString("\n\n")
+
+	if m.configErr != nil {
+		b.WriteString(errorStyle.Render(m.configErr.Error()))
+		b.WriteString("\n")
+		return panelStyle.Width(width).Height(height).Render(b.String())
+	}
+	if m.config == nil {
+		b.WriteString(mutedStyle.Render("loading..."))
+		b.WriteString("\n")
+		return panelStyle.Width(width).Height(height).Render(b.String())
+	}
+
+	writeConfigSection(&b, "HARDWARE", m.config, []string{
+		"cores", "sockets", "cpu", "memory", "balloon",
+		"scsihw", "bios", "machine", "ostype", "agent",
+	})
+	writeConfigPrefixes(&b, "DISKS", m.config, []string{
+		"scsi", "virtio", "sata", "ide", "efidisk", "tpmstate", "rootfs", "mp",
+	})
+	writeConfigPrefixes(&b, "NETWORK", m.config, []string{"net"})
+	writeConfigSection(&b, "OPTIONS", m.config, remainingConfigKeys(m.config))
+
+	return panelStyle.Width(width).Height(height).Render(b.String())
+}
+
+func writeConfigSection(b *strings.Builder, title string, config proxmox.GuestConfig, keys []string) {
+	wroteTitle := false
+	for _, key := range keys {
+		value, ok := config[key]
+		if !ok {
+			continue
+		}
+		if !wroteTitle {
+			b.WriteString(panelTitleStyle.Render(title))
+			b.WriteString("\n")
+			wroteTitle = true
+		}
+		b.WriteString(kv(truncate(key, 10), truncate(fmt.Sprint(value), 44)))
+	}
+	if wroteTitle {
+		b.WriteString("\n")
+	}
+}
+
+func writeConfigPrefixes(b *strings.Builder, title string, config proxmox.GuestConfig, prefixes []string) {
+	keys := make([]string, 0)
+	for key := range config {
+		for _, prefix := range prefixes {
+			if strings.HasPrefix(key, prefix) {
+				keys = append(keys, key)
+				break
+			}
+		}
+	}
+	sort.Strings(keys)
+	writeConfigSection(b, title, config, keys)
+}
+
+func remainingConfigKeys(config proxmox.GuestConfig) []string {
+	known := map[string]bool{
+		"cores": true, "sockets": true, "cpu": true, "memory": true, "balloon": true,
+		"scsihw": true, "bios": true, "machine": true, "ostype": true, "agent": true,
+	}
+	keys := make([]string, 0)
+	for key := range config {
+		if known[key] || hasAnyPrefix(key, []string{"scsi", "virtio", "sata", "ide", "efidisk", "tpmstate", "rootfs", "mp", "net"}) {
+			continue
+		}
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func hasAnyPrefix(value string, prefixes []string) bool {
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(value, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func (m Model) selectedGuest() (proxmox.Guest, bool) {
@@ -421,6 +909,64 @@ func (m *Model) nextSort() {
 	default:
 		m.sortBy = "id"
 	}
+}
+
+func (m *Model) toggleView() {
+	if m.viewMode == viewUsers {
+		m.viewMode = viewGuests
+		m.message = ""
+		return
+	}
+	m.viewMode = viewUsers
+	m.message = "users view: s load TFA, x disable TFA"
+}
+
+func (m *Model) moveSelection(delta int) {
+	if m.viewMode == viewUsers {
+		next := m.selectedUser + delta
+		if next >= 0 && next < len(m.data.users) {
+			m.selectedUser = next
+		}
+		return
+	}
+
+	next := m.selected + delta
+	if next >= 0 && next < len(m.filteredGuests()) {
+		m.selected = next
+	}
+}
+
+func (m Model) selectedUserModel() (proxmox.User, bool) {
+	if len(m.data.users) == 0 || m.selectedUser >= len(m.data.users) {
+		return proxmox.User{}, false
+	}
+	return m.data.users[m.selectedUser], true
+}
+
+func (m Model) footerText() string {
+	if m.inputMode == inputSnapshot {
+		ram := "on"
+		if !m.snapshotVMState {
+			ram = "off"
+		}
+		return "snapshot name: " + m.input + "  ram:" + ram + "  tab toggle-ram  enter create  esc cancel"
+	}
+	if m.inputMode == inputDisableTFA {
+		return "confirm userid: " + m.input + "  enter disable TFA  esc cancel"
+	}
+	if m.inputMode == inputSearch {
+		return "search: " + m.input + "  enter apply  esc cancel"
+	}
+	if m.viewMode == viewUsers {
+		return "u guests  p updates  b backups  s load-tfa  x disable-tfa  r refresh  q quit"
+	}
+	if m.viewMode == viewUpdates {
+		return "u users  b backups  r refresh  q quit"
+	}
+	if m.viewMode == viewBackups {
+		return "u users  p updates  r refresh  q quit"
+	}
+	return "enter config  u users  p updates  b backups  r refresh  / search  f filter  t sort  s snapshots  n new-snapshot  q quit"
 }
 
 func kv(key string, value string) string {

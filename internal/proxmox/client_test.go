@@ -48,6 +48,26 @@ func TestGuestStatusFallsBackToLXC(t *testing.T) {
 	}
 }
 
+func TestGuestConfigFallsBackToLXC(t *testing.T) {
+	runner := &command.MockRunner{
+		Responses: map[string]command.Result{
+			"pvesh get /nodes/pve/lxc/400/config --output-format json": {Stdout: []byte(`{"hostname":"ct","memory":1024,"net0":"name=eth0,bridge=vmbr0"}`)},
+		},
+		Errors: map[string]error{
+			"pvesh get /nodes/pve/qemu/400/config --output-format json": command.CommandError{Result: command.Result{Command: "pvesh", ExitCode: 255}},
+		},
+	}
+	client := Client{Runner: runner, Node: "pve"}
+
+	config, err := client.GuestConfig(context.Background(), 400)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if config["hostname"] != "ct" {
+		t.Fatalf("unexpected config: %#v", config)
+	}
+}
+
 func TestStoragesComputesUsage(t *testing.T) {
 	runner := &command.MockRunner{
 		Responses: map[string]command.Result{
@@ -91,16 +111,61 @@ func TestSnapshotsFallsBackToLXC(t *testing.T) {
 func TestCreateSnapshotUsesQEMUFirst(t *testing.T) {
 	runner := &command.MockRunner{
 		Responses: map[string]command.Result{
-			"pvesh create /nodes/pve/qemu/300/snapshot -snapname test -description hello": {},
+			"pvesh create /nodes/pve/qemu/300/snapshot -snapname test -description hello -vmstate 1": {},
 		},
 	}
 	client := Client{Runner: runner, Node: "pve"}
 
-	err := client.CreateSnapshot(context.Background(), 300, "test", "hello")
+	err := client.CreateSnapshot(context.Background(), 300, "test", "hello", true)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(runner.Calls) != 1 {
 		t.Fatalf("expected 1 call, got %#v", runner.Calls)
+	}
+}
+
+func TestParseAptUpdates(t *testing.T) {
+	data := []byte("Listing...\nlibssl3/stable 3.0.17 amd64 [upgradable from: 3.0.16]\n")
+	updates := parseAptUpdates(data)
+	if len(updates) != 1 {
+		t.Fatalf("expected 1 update, got %d", len(updates))
+	}
+	if updates[0].Name != "libssl3" || updates[0].Current != "3.0.16" || updates[0].Candidate != "3.0.17" {
+		t.Fatalf("unexpected update: %#v", updates[0])
+	}
+}
+
+func TestUsers(t *testing.T) {
+	runner := &command.MockRunner{
+		Responses: map[string]command.Result{
+			"pvesh get /access/users --output-format json": {Stdout: []byte(`[{"userid":"root@pam","enable":true}]`)},
+		},
+	}
+	client := Client{Runner: runner, Node: "pve"}
+
+	users, err := client.Users(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(users) != 1 || users[0].UserID != "root@pam" {
+		t.Fatalf("unexpected users: %#v", users)
+	}
+}
+
+func TestDisableUserTFA(t *testing.T) {
+	runner := &command.MockRunner{
+		Responses: map[string]command.Result{
+			"pveum user tfa delete root@pam": {},
+		},
+	}
+	client := Client{Runner: runner, Node: "pve"}
+
+	err := client.DisableUserTFA(context.Background(), "root@pam")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(runner.Calls) != 1 || runner.Calls[0] != "pveum user tfa delete root@pam" {
+		t.Fatalf("unexpected calls: %#v", runner.Calls)
 	}
 }
