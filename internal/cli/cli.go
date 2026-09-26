@@ -11,11 +11,14 @@ import (
 
 	"pvc/internal/command"
 	"pvc/internal/health"
+	"pvc/internal/platform"
 	"pvc/internal/proxmox"
 	"pvc/internal/ui"
 	"pvc/internal/validate"
 	"pvc/internal/version"
 )
+
+var isRoot = platform.IsRoot
 
 const usage = `pve-console - Proxmox CLI Manager
 
@@ -172,6 +175,10 @@ func runSnapshot(ctx context.Context, client proxmox.Client, args []string, opts
 }
 
 func runTUI(client proxmox.Client, stderr io.Writer) int {
+	if !isRoot() {
+		fmt.Fprintln(stderr, "Unable to run TUI: pve-console must be run as root.")
+		return 3
+	}
 	if err := ui.Run(client); err != nil {
 		return printError(stderr, "Unable to run TUI.", err)
 	}

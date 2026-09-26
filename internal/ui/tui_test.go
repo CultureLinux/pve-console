@@ -27,6 +27,41 @@ func TestFilteredGuests(t *testing.T) {
 	}
 }
 
+func TestSearchFiltersListViews(t *testing.T) {
+	model := New(proxmox.Client{})
+	model.query = "nas"
+	model.data.users = []proxmox.User{
+		{UserID: "root@pam", Email: "root@example.test"},
+		{UserID: "backup@pam", Email: "nas@example.test"},
+	}
+	model.data.updates = []proxmox.PackageUpdate{
+		{Name: "libssl3", Candidate: "2"},
+		{Name: "nfs-common", Candidate: "nas-fix"},
+	}
+	model.data.guests = []proxmox.Guest{{VMID: 300, Name: "wp-preprod"}}
+	model.data.backups = []proxmox.BackupJob{
+		{ID: "daily", Storage: "backup-nas", VMID: "300"},
+		{ID: "local", Storage: "local", VMID: "302"},
+	}
+	model.data.backupVolumes = []proxmox.BackupVolume{
+		{VMID: 300, VolID: "backup-nas:backup/vzdump-qemu-300.vma.zst"},
+		{VMID: 302, VolID: "local:backup/vzdump-qemu-302.vma.zst"},
+	}
+
+	if got := model.filteredUsers(); len(got) != 1 || got[0].UserID != "backup@pam" {
+		t.Fatalf("unexpected filtered users: %#v", got)
+	}
+	if got := model.filteredUpdates(); len(got) != 1 || got[0].Name != "nfs-common" {
+		t.Fatalf("unexpected filtered updates: %#v", got)
+	}
+	if got := model.filteredBackupJobs(); len(got) != 1 || got[0].ID != "daily" {
+		t.Fatalf("unexpected filtered backup jobs: %#v", got)
+	}
+	if got := model.filteredBackupVolumes(); len(got) != 1 || got[0].VMID != 300 {
+		t.Fatalf("unexpected filtered backup volumes: %#v", got)
+	}
+}
+
 func TestNextFilter(t *testing.T) {
 	model := New(proxmox.Client{})
 
@@ -78,6 +113,7 @@ func TestUserPanelShowsUsers(t *testing.T) {
 
 func TestFooterShowsDisableTFAConfirmation(t *testing.T) {
 	model := New(proxmox.Client{})
+	model.modalMode = modalNone
 	model.inputMode = inputDisableTFA
 	model.input = "root@pam"
 
@@ -104,6 +140,56 @@ func TestModalRendersSnapshotActions(t *testing.T) {
 	for _, want := range []string{"SNAPSHOT", "VMID 300", "before-upgrade", "Snap", "Annuler"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("expected %q in modal, got %q", want, view)
+		}
+	}
+}
+
+func TestModalRendersBackupStorageSelect(t *testing.T) {
+	model := New(proxmox.Client{})
+	model.data.storages = []proxmox.Storage{{Name: "local", Active: true}, {Name: "backup-nas", Active: true}}
+	model.openModal(modalBackup, 300, "", model.defaultBackupStorage())
+
+	view := model.modal(80)
+	for _, want := range []string{"BACKUP", "VMID 300", "Storage", "< backup-nas >", "Backup", "Annuler"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected %q in modal, got %q", want, view)
+		}
+	}
+}
+
+func TestModalRendersScheduleVMIDs(t *testing.T) {
+	model := New(proxmox.Client{})
+	model.data.guests = []proxmox.Guest{{VMID: 300, Name: "wp-preprod"}, {VMID: 302, Name: "worker"}}
+	model.openModal(modalSchedule, 0, "daily", "02:30")
+	model.modalVMIDs = "300,302"
+
+	view := model.modal(80)
+	for _, want := range []string{"BACKUP SCHEDULE", "Job daily", "Schedule", "02:30", "VMIDs", "300,302", "Guest", "[x] 300 wp-preprod", "Save"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected %q in modal, got %q", want, view)
+		}
+	}
+}
+
+func TestStartupModalWarnsExperimentalRootActions(t *testing.T) {
+	model := New(proxmox.Client{})
+
+	view := model.modal(80)
+	for _, want := range []string{"EXPERIMENTAL", "still experimental", "executed as root", "enter continue"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected %q in startup modal, got %q", want, view)
+		}
+	}
+}
+
+func TestHelpModalRendersCommandsAndCredit(t *testing.T) {
+	model := New(proxmox.Client{})
+	model.openModal(modalHelp, 0, "", "")
+
+	view := model.modal(80)
+	for _, want := range []string{"HELP", "Navigation", "Backups", "n              new snapshot", "e              edit schedule and VMIDs", "?, h           open / close help", "dev by @clinux"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected %q in help modal, got %q", want, view)
 		}
 	}
 }

@@ -60,6 +60,24 @@ func TestRunHelpPrintsUsage(t *testing.T) {
 	}
 }
 
+func TestRunTUIRequiresRoot(t *testing.T) {
+	previous := isRoot
+	isRoot = func() bool { return false }
+	defer func() { isRoot = previous }()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := RunWithClient([]string{"tui"}, Options{}, proxmox.Client{}, &stdout, &stderr)
+
+	if code != 3 {
+		t.Fatalf("expected exit code 3, got %d", code)
+	}
+	if !strings.Contains(stderr.String(), "must be run as root") {
+		t.Fatalf("expected root error, got %q", stderr.String())
+	}
+}
+
 func TestParseGlobalOptions(t *testing.T) {
 	opts, rest, err := ParseGlobalOptions([]string{"--debug", "--json", "vm", "list"})
 	if err != nil {

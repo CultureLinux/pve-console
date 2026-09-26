@@ -251,8 +251,12 @@ func (c Client) RunBackup(ctx context.Context, vmid int, storage string) error {
 	return nil
 }
 
-func (c Client) UpdateBackupSchedule(ctx context.Context, id string, schedule string) error {
-	if _, err := c.Runner.Run(ctx, "pvesh", "set", fmt.Sprintf("/cluster/backup/%s", id), "-schedule", schedule); err != nil {
+func (c Client) UpdateBackupJob(ctx context.Context, id string, schedule string, vmids string) error {
+	args := []string{"set", fmt.Sprintf("/cluster/backup/%s", id), "-schedule", schedule}
+	if vmids != "" {
+		args = append(args, "-vmid", vmids)
+	}
+	if _, err := c.Runner.Run(ctx, "pvesh", args...); err != nil {
 		return fmt.Errorf("unable to update backup job %s: %w", id, err)
 	}
 	return nil

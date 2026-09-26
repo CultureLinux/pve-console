@@ -46,6 +46,7 @@ type runBackupMsg struct {
 type updateBackupScheduleMsg struct {
 	id       string
 	schedule string
+	vmids    string
 	err      error
 }
 type configMsg struct {
@@ -87,6 +88,8 @@ const (
 	modalSnapshot   modalMode = "snapshot"
 	modalBackup     modalMode = "backup"
 	modalSchedule   modalMode = "schedule"
+	modalHelp       modalMode = "help"
+	modalStartup    modalMode = "startup"
 	viewGuests      string    = "guests"
 	viewUsers       string    = "users"
 	viewUpdates     string    = "updates"
@@ -106,6 +109,9 @@ type Model struct {
 	modalMode       modalMode
 	modalField      int
 	modalInput      string
+	modalVMIDs      string
+	modalStorage    int
+	modalGuest      int
 	modalTargetVMID int
 	modalJobID      string
 	viewMode        string
@@ -131,7 +137,7 @@ type Model struct {
 }
 
 func New(client proxmox.Client) Model {
-	return Model{client: client, loading: true, filter: "all", guestTypeFilter: "all", sortBy: "id", viewMode: viewGuests, snapshotVMState: true, backupMode: "volumes"}
+	return Model{client: client, loading: true, filter: "all", guestTypeFilter: "all", sortBy: "id", viewMode: viewGuests, snapshotVMState: true, backupMode: "volumes", modalMode: modalStartup}
 }
 
 func Run(client proxmox.Client) error {
@@ -151,25 +157,74 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 	case tea.KeyMsg:
 		if m.modalMode != modalNone {
+			if m.modalMode == modalStartup {
+				switch msg.String() {
+				case "esc", "enter":
+					m.closeModal()
+				}
+				return m, nil
+			}
+			if m.modalMode == modalHelp {
+				switch msg.String() {
+				case "esc", "enter", "?", "h":
+					m.closeModal()
+				}
+				return m, nil
+			}
 			switch msg.String() {
 			case "esc":
 				m.closeModal()
-			case "tab", "right":
-				m.modalField = (m.modalField + 1) % 3
-			case "left":
-				m.modalField--
-				if m.modalField < 0 {
-					m.modalField = 2
-				}
 			case "enter":
 				return m.handleModalSubmit()
+			case "tab", "right":
+				if m.modalMode == modalBackup && m.modalField == 0 && msg.String() == "right" {
+					m.nextModalStorage(1)
+				} else {
+					m.modalField = (m.modalField + 1) % m.modalFieldCount()
+				}
+			case "shift+tab":
+				m.modalField--
+				if m.modalField < 0 {
+					m.modalField = m.modalFieldCount() - 1
+				}
+			case "left":
+				if m.modalMode == modalBackup && m.modalField == 0 {
+					m.nextModalStorage(-1)
+				} else {
+					m.modalField--
+					if m.modalField < 0 {
+						m.modalField = m.modalFieldCount() - 1
+					}
+				}
+			case "up":
+				if m.modalMode == modalBackup && m.modalField == 0 {
+					m.nextModalStorage(-1)
+				} else if m.modalMode == modalSchedule && m.modalField == 1 {
+					m.nextModalGuest(-1)
+				}
+			case "down":
+				if m.modalMode == modalBackup && m.modalField == 0 {
+					m.nextModalStorage(1)
+				} else if m.modalMode == modalSchedule && m.modalField == 1 {
+					m.nextModalGuest(1)
+				}
+			case " ":
+				if m.modalMode == modalSchedule && m.modalField == 1 {
+					m.toggleModalGuest()
+				} else if m.modalMode != modalBackup && m.modalField == 0 {
+					m.modalInput += msg.String()
+				}
 			case "backspace":
-				if m.modalField == 0 && len(m.modalInput) > 0 {
+				if m.modalMode != modalBackup && m.modalField == 0 && len(m.modalInput) > 0 {
 					m.modalInput = m.modalInput[:len(m.modalInput)-1]
+				} else if m.modalMode == modalSchedule && m.modalField == 1 && len(m.modalVMIDs) > 0 {
+					m.modalVMIDs = m.modalVMIDs[:len(m.modalVMIDs)-1]
 				}
 			default:
-				if m.modalField == 0 && len(msg.String()) == 1 {
+				if m.modalMode != modalBackup && m.modalField == 0 && len(msg.String()) == 1 {
 					m.modalInput += msg.String()
+				} else if m.modalMode == modalSchedule && m.modalField == 1 && len(msg.String()) == 1 {
+					m.modalVMIDs += msg.String()
 				}
 			}
 			return m, nil
@@ -199,6 +254,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		switch msg.String() {
+		case "?", "h":
+			m.openModal(modalHelp, 0, "", "")
 		case "q", "ctrl+c":
 			return m, tea.Quit
 		case "esc":
@@ -269,7 +326,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.selected = 0
 		case "c":
 			m.query = ""
-			m.selected = 0
+			m.resetActiveSelection()
 		case "up", "k":
 			m.moveSelection(-1)
 		case "down", "j":
@@ -329,9 +386,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.openModal(modalBackup, vmid, "", m.defaultBackupStorage())
 			}
 		case "e":
-			if m.viewMode == viewBackups && m.backupMode == "jobs" && len(m.data.backups) > 0 && m.selectedBackup < len(m.data.backups) {
-				job := m.data.backups[m.selectedBackup]
+			if m.viewMode == viewBackups && m.backupMode == "jobs" {
+				job, ok := m.selectedBackupJob()
+				if !ok {
+					return m, nil
+				}
 				m.openModal(modalSchedule, 0, job.ID, job.Schedule)
+				m.modalVMIDs = job.VMID
 			}
 		case "x":
 			if m.viewMode == viewUsers {
@@ -353,24 +414,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		next.updateErr = m.data.updateErr
 		next.backupErr = m.data.backupErr
 		m.data = next
-		if m.selected >= len(m.filteredGuests()) {
-			m.selected = len(m.filteredGuests()) - 1
-		}
-		if m.selected < 0 {
-			m.selected = 0
-		}
-		if m.selectedUser >= len(m.data.users) {
-			m.selectedUser = len(m.data.users) - 1
-		}
-		if m.selectedUser < 0 {
-			m.selectedUser = 0
-		}
-		if m.selectedBackup >= m.backupItemCount() {
-			m.selectedBackup = m.backupItemCount() - 1
-		}
-		if m.selectedBackup < 0 {
-			m.selectedBackup = 0
-		}
+		m.clampSelections()
 	case tickMsg:
 		if !m.loading {
 			m.loading = true
@@ -444,6 +488,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case usersMsg:
 		m.loading = false
 		m.data.users = msg.users
+		m.clampSelections()
 		if msg.err != nil {
 			m.message = msg.err.Error()
 		}
@@ -456,6 +501,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.data.backups = msg.jobs
 		m.data.backupVolumes = msg.volumes
 		m.data.backupErr = msg.err
+		m.clampSelections()
 	}
 
 	return m, nil
@@ -591,12 +637,12 @@ func (m Model) runBackup(vmid int, storage string) tea.Cmd {
 	}
 }
 
-func (m Model) updateBackupSchedule(id string, schedule string) tea.Cmd {
+func (m Model) updateBackupJob(id string, schedule string, vmids string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		err := m.client.UpdateBackupSchedule(ctx, id, schedule)
-		return updateBackupScheduleMsg{id: id, schedule: schedule, err: err}
+		err := m.client.UpdateBackupJob(ctx, id, schedule, vmids)
+		return updateBackupScheduleMsg{id: id, schedule: schedule, vmids: vmids, err: err}
 	}
 }
 
@@ -622,6 +668,9 @@ func (m *Model) openModal(mode modalMode, vmid int, jobID string, value string) 
 	m.modalMode = mode
 	m.modalField = 0
 	m.modalInput = value
+	m.modalVMIDs = ""
+	m.modalStorage = m.storageIndex(value)
+	m.modalGuest = 0
 	m.modalTargetVMID = vmid
 	m.modalJobID = jobID
 	m.inputMode = inputNone
@@ -632,24 +681,31 @@ func (m *Model) closeModal() {
 	m.modalMode = modalNone
 	m.modalField = 0
 	m.modalInput = ""
+	m.modalVMIDs = ""
+	m.modalStorage = 0
+	m.modalGuest = 0
 	m.modalTargetVMID = 0
 	m.modalJobID = ""
 }
 
 func (m Model) handleModalSubmit() (tea.Model, tea.Cmd) {
-	if m.modalField == 2 {
+	lastField := m.modalFieldCount() - 1
+	confirmField := lastField - 1
+	if m.modalField == lastField {
 		m.closeModal()
 		return m, nil
 	}
-	if m.modalField == 0 {
-		m.modalField = 1
+	if m.modalField != confirmField {
+		m.modalField = confirmField
 		return m, nil
 	}
 
 	value := strings.TrimSpace(m.modalInput)
+	vmids := strings.TrimSpace(m.modalVMIDs)
 	mode := m.modalMode
 	vmid := m.modalTargetVMID
 	jobID := m.modalJobID
+	storage := m.selectedModalStorage()
 	m.closeModal()
 
 	switch mode {
@@ -665,17 +721,87 @@ func (m Model) handleModalSubmit() (tea.Model, tea.Cmd) {
 		return m, m.createSnapshot(vmid, value)
 	case modalBackup:
 		m.message = fmt.Sprintf("starting backup for %d", vmid)
-		return m, m.runBackup(vmid, value)
+		return m, m.runBackup(vmid, storage)
 	case modalSchedule:
 		if value == "" {
 			m.message = "backup schedule is required"
 			return m, nil
 		}
+		if vmids == "" {
+			m.message = "backup VMIDs are required"
+			return m, nil
+		}
 		m.message = fmt.Sprintf("updating backup job %s", jobID)
-		return m, m.updateBackupSchedule(jobID, value)
+		return m, m.updateBackupJob(jobID, value, vmids)
 	}
 
 	return m, nil
+}
+
+func (m Model) modalFieldCount() int {
+	if m.modalMode == modalSchedule {
+		return 4
+	}
+	return 3
+}
+
+func (m Model) selectedModalStorage() string {
+	storages := m.backupStorages()
+	if len(storages) == 0 {
+		return strings.TrimSpace(m.modalInput)
+	}
+	if m.modalStorage < 0 || m.modalStorage >= len(storages) {
+		return storages[0]
+	}
+	return storages[m.modalStorage]
+}
+
+func (m *Model) nextModalStorage(delta int) {
+	storages := m.backupStorages()
+	if len(storages) == 0 {
+		return
+	}
+	m.modalStorage = (m.modalStorage + delta + len(storages)) % len(storages)
+	m.modalInput = storages[m.modalStorage]
+}
+
+func (m *Model) nextModalGuest(delta int) {
+	if len(m.data.guests) == 0 {
+		return
+	}
+	m.modalGuest = (m.modalGuest + delta + len(m.data.guests)) % len(m.data.guests)
+}
+
+func (m *Model) toggleModalGuest() {
+	if len(m.data.guests) == 0 || m.modalGuest >= len(m.data.guests) {
+		return
+	}
+	vmid := fmt.Sprintf("%d", m.data.guests[m.modalGuest].VMID)
+	parts := vmidParts(m.modalVMIDs)
+	for i, part := range parts {
+		if part == vmid {
+			parts = append(parts[:i], parts[i+1:]...)
+			m.modalVMIDs = strings.Join(parts, ",")
+			return
+		}
+	}
+	parts = append(parts, vmid)
+	m.modalVMIDs = strings.Join(parts, ",")
+}
+
+func (m Model) modalGuestLabel() string {
+	if len(m.data.guests) == 0 || m.modalGuest >= len(m.data.guests) {
+		return "-"
+	}
+	guest := m.data.guests[m.modalGuest]
+	mark := " "
+	for _, part := range vmidParts(m.modalVMIDs) {
+		if part == fmt.Sprintf("%d", guest.VMID) {
+			mark = "x"
+			break
+		}
+	}
+	return fmt.Sprintf("[%s] %d %s", mark, guest.VMID, guest.Name)
 }
 
 func (m Model) handleInputSubmit() (tea.Model, tea.Cmd) {
@@ -687,7 +813,7 @@ func (m Model) handleInputSubmit() (tea.Model, tea.Cmd) {
 	switch mode {
 	case inputSearch:
 		m.query = input
-		m.selected = 0
+		m.resetActiveSelection()
 	case inputDisableTFA:
 		user, ok := m.selectedUserModel()
 		if !ok {
@@ -780,23 +906,26 @@ func (m Model) guestPanel(width int, height int) string {
 }
 
 func (m Model) userPanel(width int, height int) string {
+	users := m.filteredUsers()
 	var b strings.Builder
-	b.WriteString(panelTitleStyle.Render("USERS"))
+	b.WriteString(panelTitleStyle.Render(fmt.Sprintf("USERS (%d)", len(users))))
 	b.WriteString("\n")
 	b.WriteString(mutedStyle.Render(fmt.Sprintf("%-28s %-7s %-5s %-20s", "USERID", "ENABLED", "TFA", "EMAIL")))
 	b.WriteString("\n")
 
 	if len(m.data.users) == 0 {
 		b.WriteString(mutedStyle.Render("no users loaded"))
+	} else if len(users) == 0 {
+		b.WriteString(mutedStyle.Render("no users found"))
 	} else {
 		rows := max(1, height-5)
 		start := 0
 		if m.selectedUser >= rows {
 			start = m.selectedUser - rows + 1
 		}
-		end := min(len(m.data.users), start+rows)
+		end := min(len(users), start+rows)
 		for i := start; i < end; i++ {
-			user := m.data.users[i]
+			user := users[i]
 			line := fmt.Sprintf("%-28s %-7t %-5t %-20s", truncate(user.UserID, 28), bool(user.Enable), user.TFAEnabled, truncate(user.Email, 20))
 			if i == m.selectedUser {
 				b.WriteString(selectedRowStyle.Width(width - 4).Render(line))
@@ -811,8 +940,9 @@ func (m Model) userPanel(width int, height int) string {
 }
 
 func (m Model) updatesPanel(width int, height int) string {
+	updates := m.filteredUpdates()
 	var b strings.Builder
-	b.WriteString(panelTitleStyle.Render(fmt.Sprintf("APT UPDATES (%d)", len(m.data.updates))))
+	b.WriteString(panelTitleStyle.Render(fmt.Sprintf("APT UPDATES (%d)", len(updates))))
 	b.WriteString("\n")
 	b.WriteString(mutedStyle.Render(fmt.Sprintf("%-28s %-18s %-18s", "PACKAGE", "CURRENT", "CANDIDATE")))
 	b.WriteString("\n")
@@ -820,10 +950,12 @@ func (m Model) updatesPanel(width int, height int) string {
 		b.WriteString(errorStyle.Render(m.data.updateErr.Error()))
 	} else if len(m.data.updates) == 0 {
 		b.WriteString(okStyle.Render("system up to date"))
+	} else if len(updates) == 0 {
+		b.WriteString(mutedStyle.Render("no updates found"))
 	} else {
 		rows := max(1, height-5)
-		for i := 0; i < min(len(m.data.updates), rows); i++ {
-			update := m.data.updates[i]
+		for i := 0; i < min(len(updates), rows); i++ {
+			update := updates[i]
 			line := fmt.Sprintf("%-28s %-18s %-18s", truncate(update.Name, 28), truncate(update.Current, 18), truncate(update.Candidate, 18))
 			b.WriteString(rowStyle.Width(width - 4).Render(line))
 			b.WriteString("\n")
@@ -833,11 +965,12 @@ func (m Model) updatesPanel(width int, height int) string {
 }
 
 func (m Model) backupsPanel(width int, height int) string {
+	count := m.backupItemCount()
 	var b strings.Builder
 	if m.backupMode == "jobs" {
-		b.WriteString(panelTitleStyle.Render(fmt.Sprintf("BACKUP JOBS (%d)", len(m.data.backups))))
+		b.WriteString(panelTitleStyle.Render(fmt.Sprintf("BACKUP JOBS (%d)", count)))
 	} else {
-		b.WriteString(panelTitleStyle.Render(fmt.Sprintf("BACKUP VOLUMES (%d)", len(m.data.backupVolumes))))
+		b.WriteString(panelTitleStyle.Render(fmt.Sprintf("BACKUP VOLUMES (%d)", count)))
 	}
 	b.WriteString("\n")
 	if m.backupMode == "jobs" {
@@ -848,7 +981,7 @@ func (m Model) backupsPanel(width int, height int) string {
 	b.WriteString("\n")
 	if m.data.backupErr != nil {
 		b.WriteString(errorStyle.Render(m.data.backupErr.Error()))
-	} else if m.backupItemCount() == 0 {
+	} else if count == 0 {
 		b.WriteString(mutedStyle.Render("no backups found"))
 	} else {
 		rows := max(1, height-5)
@@ -856,7 +989,7 @@ func (m Model) backupsPanel(width int, height int) string {
 		if m.selectedBackup >= rows {
 			start = m.selectedBackup - rows + 1
 		}
-		end := min(m.backupItemCount(), start+rows)
+		end := min(count, start+rows)
 		for i := start; i < end; i++ {
 			line := m.backupLine(i)
 			if i == m.selectedBackup {
@@ -1013,16 +1146,22 @@ func (m Model) backupsDetailPanel(width int, height int) string {
 	b.WriteString(kv("Manual", "m"))
 	b.WriteString(kv("Schedule", "e"))
 	b.WriteString("\n")
-	if m.backupMode == "jobs" && len(m.data.backups) > 0 && m.selectedBackup < len(m.data.backups) {
-		job := m.data.backups[m.selectedBackup]
+	if m.backupMode == "jobs" {
+		job, ok := m.selectedBackupJob()
+		if !ok {
+			return panelStyle.Width(width).Height(height).Render(b.String())
+		}
 		b.WriteString(kv("ID", job.ID))
 		b.WriteString(kv("Storage", job.Storage))
 		b.WriteString(kv("Schedule", job.Schedule))
 		b.WriteString(kv("Enabled", fmt.Sprintf("%t", bool(job.Enabled))))
 		b.WriteString(kv("VMIDs", job.VMID))
 	}
-	if m.backupMode != "jobs" && len(m.data.backupVolumes) > 0 && m.selectedBackup < len(m.data.backupVolumes) {
-		volume := m.data.backupVolumes[m.selectedBackup]
+	if m.backupMode != "jobs" {
+		volume, ok := m.selectedBackupVolume()
+		if !ok {
+			return panelStyle.Width(width).Height(height).Render(b.String())
+		}
 		b.WriteString(kv("VMID", fmt.Sprintf("%d", volume.VMID)))
 		b.WriteString(kv("Name", m.guestName(volume.VMID)))
 		b.WriteString(kv("Date", timeLabel(volume.CTime)))
@@ -1039,6 +1178,13 @@ func (m Model) backupsDetailPanel(width int, height int) string {
 }
 
 func (m Model) modal(width int) string {
+	if m.modalMode == modalStartup {
+		return m.startupModal(width)
+	}
+	if m.modalMode == modalHelp {
+		return m.helpModal(width)
+	}
+
 	title := "SNAPSHOT"
 	label := "Name"
 	confirm := "Snap"
@@ -1057,6 +1203,9 @@ func (m Model) modal(width int) string {
 	}
 
 	input := m.modalInput
+	if m.modalMode == modalBackup {
+		input = "< " + m.selectedModalStorage() + " >"
+	}
 	if input == "" {
 		input = " "
 	}
@@ -1064,12 +1213,14 @@ func (m Model) modal(width int) string {
 	if m.modalField == 0 {
 		inputStyle = selectedRowStyle
 	}
+	lastField := m.modalFieldCount() - 1
+	confirmField := lastField - 1
 	confirmStyle := rowStyle
-	if m.modalField == 1 {
+	if m.modalField == confirmField {
 		confirmStyle = selectedRowStyle
 	}
 	cancelStyle := rowStyle
-	if m.modalField == 2 {
+	if m.modalField == lastField {
 		cancelStyle = selectedRowStyle
 	}
 
@@ -1079,10 +1230,28 @@ func (m Model) modal(width int) string {
 	b.WriteString(mutedStyle.Render(context))
 	b.WriteString("\n\n")
 	b.WriteString(kv(label, inputStyle.Width(28).Render(input)))
+	if m.modalMode == modalSchedule {
+		vmids := m.modalVMIDs
+		if vmids == "" {
+			vmids = " "
+		}
+		vmidStyle := rowStyle
+		if m.modalField == 1 {
+			vmidStyle = selectedRowStyle
+		}
+		b.WriteString(kv("VMIDs", vmidStyle.Width(28).Render(vmids)))
+		b.WriteString(kv("Guest", m.modalGuestLabel()))
+	}
 	b.WriteString("\n")
 	b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, confirmStyle.Padding(0, 2).Render(confirm), "  ", cancelStyle.Padding(0, 2).Render("Annuler")))
 	b.WriteString("\n")
-	b.WriteString(mutedStyle.Render("tab select  enter apply  esc cancel"))
+	help := "tab select  enter apply  esc cancel"
+	if m.modalMode == modalBackup {
+		help = "up/down storage  tab select  enter apply  esc cancel"
+	} else if m.modalMode == modalSchedule {
+		help = "vmids: up/down guest  space toggle  tab select  enter apply  esc cancel"
+	}
+	b.WriteString(mutedStyle.Render(help))
 
 	return lipgloss.NewStyle().
 		Width(min(48, max(32, width-8))).
@@ -1090,6 +1259,79 @@ func (m Model) modal(width int) string {
 		BorderForeground(lipgloss.Color("81")).
 		Padding(1, 2).
 		Render(b.String())
+}
+
+func (m Model) startupModal(width int) string {
+	lines := []string{
+		warnStyle.Render("EXPERIMENTAL"),
+		"",
+		"pve-console is still experimental.",
+		"Use it carefully on production hosts.",
+		"",
+		"All Proxmox actions are executed as root.",
+		"Make sure you understand the selected guest, storage, and job before confirming an action.",
+		"",
+		mutedStyle.Render("enter continue  esc close warning"),
+	}
+
+	return lipgloss.NewStyle().
+		Width(min(62, max(42, width-8))).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("214")).
+		Padding(1, 2).
+		Render(strings.Join(lines, "\n"))
+}
+
+func (m Model) helpModal(width int) string {
+	lines := []string{
+		panelTitleStyle.Render("HELP"),
+		"",
+		"Navigation",
+		"  up/down, k/j   move selection",
+		"  enter          open guest config",
+		"  esc            back / close",
+		"  r              refresh",
+		"  q              quit",
+		"",
+		"Views",
+		"  g              guests",
+		"  u              users",
+		"  p              updates",
+		"  b              backups",
+		"  tab            guest type or backup mode",
+		"",
+		"Guests",
+		"  /              search",
+		"  c              clear search",
+		"  f              status filter",
+		"  t              sort",
+		"  s              load snapshots",
+		"  n              new snapshot",
+		"  m              manual backup",
+		"",
+		"Backups",
+		"  m              manual backup",
+		"  e              edit schedule and VMIDs",
+		"  storage modal  up/down select storage",
+		"  VMIDs modal    up/down guest, space toggle",
+		"",
+		"Users",
+		"  s              load TFA",
+		"  x              disable TFA",
+		"",
+		"Help",
+		"  ?, h           open / close help",
+		"  enter, esc     close help",
+		"",
+		mutedStyle.Render("dev by @clinux"),
+	}
+
+	return lipgloss.NewStyle().
+		Width(min(56, max(38, width-8))).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("81")).
+		Padding(1, 2).
+		Render(strings.Join(lines, "\n"))
 }
 
 func (m Model) configPanel(width int, height int) string {
@@ -1222,6 +1464,66 @@ func (m Model) filteredGuests() []proxmox.Guest {
 	return guests
 }
 
+func (m Model) filteredUsers() []proxmox.User {
+	query := normalizedQuery(m.query)
+	if query == "" {
+		return m.data.users
+	}
+	users := make([]proxmox.User, 0, len(m.data.users))
+	for _, user := range m.data.users {
+		values := []string{user.UserID, user.Email, user.FirstName, user.LastName, user.Comment}
+		if containsAnyFold(values, query) {
+			users = append(users, user)
+		}
+	}
+	return users
+}
+
+func (m Model) filteredUpdates() []proxmox.PackageUpdate {
+	query := normalizedQuery(m.query)
+	if query == "" {
+		return m.data.updates
+	}
+	updates := make([]proxmox.PackageUpdate, 0, len(m.data.updates))
+	for _, update := range m.data.updates {
+		values := []string{update.Name, update.Current, update.Candidate, update.Suite}
+		if containsAnyFold(values, query) {
+			updates = append(updates, update)
+		}
+	}
+	return updates
+}
+
+func (m Model) filteredBackupJobs() []proxmox.BackupJob {
+	query := normalizedQuery(m.query)
+	if query == "" {
+		return m.data.backups
+	}
+	jobs := make([]proxmox.BackupJob, 0, len(m.data.backups))
+	for _, job := range m.data.backups {
+		values := []string{job.ID, job.Storage, job.Schedule, job.VMID, job.Mode, job.Compress, fmt.Sprintf("%t", bool(job.Enabled))}
+		if containsAnyFold(values, query) {
+			jobs = append(jobs, job)
+		}
+	}
+	return jobs
+}
+
+func (m Model) filteredBackupVolumes() []proxmox.BackupVolume {
+	query := normalizedQuery(m.query)
+	if query == "" {
+		return m.data.backupVolumes
+	}
+	volumes := make([]proxmox.BackupVolume, 0, len(m.data.backupVolumes))
+	for _, volume := range m.data.backupVolumes {
+		values := []string{fmt.Sprintf("%d", volume.VMID), m.guestName(volume.VMID), volume.VolID, volume.Format, volume.Notes, timeLabel(volume.CTime), humanBytes(volume.Size)}
+		if containsAnyFold(values, query) {
+			volumes = append(volumes, volume)
+		}
+	}
+	return volumes
+}
+
 func (m *Model) nextFilter() {
 	switch m.filter {
 	case "all":
@@ -1268,7 +1570,7 @@ func (m *Model) toggleView() {
 func (m *Model) moveSelection(delta int) {
 	if m.viewMode == viewUsers {
 		next := m.selectedUser + delta
-		if next >= 0 && next < len(m.data.users) {
+		if next >= 0 && next < len(m.filteredUsers()) {
 			m.selectedUser = next
 		}
 		return
@@ -1287,48 +1589,120 @@ func (m *Model) moveSelection(delta int) {
 	}
 }
 
+func (m *Model) resetActiveSelection() {
+	switch m.viewMode {
+	case viewUsers:
+		m.selectedUser = 0
+	case viewBackups:
+		m.selectedBackup = 0
+	default:
+		m.selected = 0
+	}
+	m.clampSelections()
+}
+
+func (m *Model) clampSelections() {
+	m.selected = clampIndex(m.selected, len(m.filteredGuests()))
+	m.selectedUser = clampIndex(m.selectedUser, len(m.filteredUsers()))
+	m.selectedBackup = clampIndex(m.selectedBackup, m.backupItemCount())
+}
+
+func clampIndex(index int, count int) int {
+	if count <= 0 || index < 0 {
+		return 0
+	}
+	if index >= count {
+		return count - 1
+	}
+	return index
+}
+
 func (m Model) selectedUserModel() (proxmox.User, bool) {
-	if len(m.data.users) == 0 || m.selectedUser >= len(m.data.users) {
+	users := m.filteredUsers()
+	if len(users) == 0 || m.selectedUser >= len(users) {
 		return proxmox.User{}, false
 	}
-	return m.data.users[m.selectedUser], true
+	return users[m.selectedUser], true
 }
 
 func (m Model) backupItemCount() int {
 	if m.backupMode == "jobs" {
-		return len(m.data.backups)
+		return len(m.filteredBackupJobs())
 	}
-	return len(m.data.backupVolumes)
+	return len(m.filteredBackupVolumes())
 }
 
 func (m Model) backupLine(index int) string {
 	if m.backupMode == "jobs" {
-		job := m.data.backups[index]
+		job := m.filteredBackupJobs()[index]
 		return fmt.Sprintf("%-18s %-14s %-18s %-8t %-18s", truncate(job.ID, 18), truncate(job.Storage, 14), truncate(job.Schedule, 18), bool(job.Enabled), truncate(job.VMID, 18))
 	}
-	volume := m.data.backupVolumes[index]
+	volume := m.filteredBackupVolumes()[index]
 	return fmt.Sprintf("%-6d %-22s %-17s %-10s", volume.VMID, truncate(m.guestName(volume.VMID), 22), timeLabel(volume.CTime), humanBytes(volume.Size))
+}
+
+func (m Model) selectedBackupJob() (proxmox.BackupJob, bool) {
+	jobs := m.filteredBackupJobs()
+	if len(jobs) == 0 || m.selectedBackup >= len(jobs) {
+		return proxmox.BackupJob{}, false
+	}
+	return jobs[m.selectedBackup], true
+}
+
+func (m Model) selectedBackupVolume() (proxmox.BackupVolume, bool) {
+	volumes := m.filteredBackupVolumes()
+	if len(volumes) == 0 || m.selectedBackup >= len(volumes) {
+		return proxmox.BackupVolume{}, false
+	}
+	return volumes[m.selectedBackup], true
 }
 
 func (m Model) selectedBackupVMID() int {
 	if m.backupMode != "jobs" {
-		if len(m.data.backupVolumes) > 0 && m.selectedBackup < len(m.data.backupVolumes) {
-			return m.data.backupVolumes[m.selectedBackup].VMID
+		volume, ok := m.selectedBackupVolume()
+		if ok {
+			return volume.VMID
 		}
 		return 0
 	}
-	if len(m.data.backups) == 0 || m.selectedBackup >= len(m.data.backups) {
+	job, ok := m.selectedBackupJob()
+	if !ok {
 		return 0
 	}
-	for _, part := range strings.FieldsFunc(m.data.backups[m.selectedBackup].VMID, func(r rune) bool {
-		return r == ',' || r == ';' || r == ' '
-	}) {
+	for _, part := range vmidParts(job.VMID) {
 		var vmid int
 		if _, err := fmt.Sscanf(part, "%d", &vmid); err == nil && vmid > 0 {
 			return vmid
 		}
 	}
 	return 0
+}
+
+func vmidParts(value string) []string {
+	raw := strings.FieldsFunc(value, func(r rune) bool {
+		return r == ',' || r == ';' || r == ' '
+	})
+	parts := make([]string, 0, len(raw))
+	for _, part := range raw {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			parts = append(parts, part)
+		}
+	}
+	return parts
+}
+
+func normalizedQuery(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
+}
+
+func containsAnyFold(values []string, query string) bool {
+	for _, value := range values {
+		if strings.Contains(strings.ToLower(value), query) {
+			return true
+		}
+	}
+	return false
 }
 
 func (m Model) guestName(vmid int) string {
@@ -1344,25 +1718,58 @@ func (m Model) guestName(vmid int) string {
 }
 
 func (m Model) defaultBackupStorage() string {
-	for _, job := range m.data.backups {
-		if job.Storage != "" {
-			return job.Storage
-		}
-	}
-	for _, storage := range m.data.storages {
-		if bool(storage.Active) && strings.Contains(strings.ToLower(storage.Name), "backup") {
-			return storage.Name
-		}
-	}
-	for _, storage := range m.data.storages {
-		if bool(storage.Active) {
-			return storage.Name
-		}
+	storages := m.backupStorages()
+	if len(storages) > 0 {
+		return storages[0]
 	}
 	return ""
 }
 
+func (m Model) backupStorages() []string {
+	names := make([]string, 0)
+	for _, job := range m.data.backups {
+		if job.Storage != "" {
+			names = appendUnique(names, job.Storage)
+		}
+	}
+	for _, storage := range m.data.storages {
+		if bool(storage.Active) && strings.Contains(strings.ToLower(storage.Name), "backup") {
+			names = appendUnique(names, storage.Name)
+		}
+	}
+	for _, storage := range m.data.storages {
+		if bool(storage.Active) {
+			names = appendUnique(names, storage.Name)
+		}
+	}
+	return names
+}
+
+func (m Model) storageIndex(name string) int {
+	for i, storage := range m.backupStorages() {
+		if storage == name {
+			return i
+		}
+	}
+	return 0
+}
+
+func appendUnique(values []string, value string) []string {
+	for _, existing := range values {
+		if existing == value {
+			return values
+		}
+	}
+	return append(values, value)
+}
+
 func (m Model) footerText() string {
+	if m.modalMode == modalStartup {
+		return "experimental warning  enter continue  esc close warning"
+	}
+	if m.modalMode == modalHelp {
+		return "help  enter/esc close  dev by @clinux"
+	}
 	if m.modalMode == modalSnapshot {
 		ram := "on"
 		if !m.snapshotVMState {
@@ -1383,15 +1790,15 @@ func (m Model) footerText() string {
 		return "search: " + m.input + "  enter apply  esc cancel"
 	}
 	if m.viewMode == viewUsers {
-		return "g guests  p updates  b backups  s load-tfa  x disable-tfa  r refresh  q quit"
+		return "g guests  p updates  b backups  s load-tfa  x disable-tfa  r refresh  ? help  q quit"
 	}
 	if m.viewMode == viewUpdates {
-		return "g guests  u users  b backups  r refresh  q quit"
+		return "g guests  u users  b backups  r refresh  ? help  q quit"
 	}
 	if m.viewMode == viewBackups {
-		return "g guests  tab jobs/volumes  m manual-backup  e edit-schedule  u users  p updates  r refresh  q quit"
+		return "g guests  tab jobs/volumes  m manual-backup  e edit-schedule  u users  p updates  r refresh  ? help  q quit"
 	}
-	return "tab vm/ct/all  enter config  u users  p updates  b backups  m backup  r refresh  / search  f status  t sort  s snapshots  n snapshot  q quit"
+	return "tab vm/ct/all  enter config  u users  p updates  b backups  m backup  r refresh  / search  f status  t sort  s snapshots  n snapshot  ? help  q quit"
 }
 
 func kv(key string, value string) string {
