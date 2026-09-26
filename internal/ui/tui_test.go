@@ -100,8 +100,9 @@ func TestFooterShowsSnapshotRAMToggle(t *testing.T) {
 func TestUpdatesAndBackupsPanels(t *testing.T) {
 	model := New(proxmox.Client{})
 	model.data.updates = []proxmox.PackageUpdate{{Name: "libssl3", Current: "1", Candidate: "2"}}
+	model.data.guests = []proxmox.Guest{{VMID: 300, Name: "wp-preprod"}}
 	model.data.backups = []proxmox.BackupJob{{ID: "daily", Storage: "backup-nas", Schedule: "03:00", Enabled: true, VMID: "300,302"}}
-	model.data.backupVolumes = []proxmox.BackupVolume{{VMID: 300, VolID: "backup-nas:backup/vzdump-qemu-300.vma.zst", Size: 1024}}
+	model.data.backupVolumes = []proxmox.BackupVolume{{VMID: 300, VolID: "backup-nas:backup/vzdump-qemu-300.vma.zst", Size: 1024, CTime: 1790413200}}
 
 	updates := model.updatesPanel(100, 20)
 	if !strings.Contains(updates, "APT UPDATES (1)") || !strings.Contains(updates, "libssl3") {
@@ -109,7 +110,7 @@ func TestUpdatesAndBackupsPanels(t *testing.T) {
 	}
 
 	backups := model.backupsPanel(100, 20)
-	if !strings.Contains(backups, "BACKUP VOLUMES (1)") || !strings.Contains(backups, "vzdump-qemu-300") {
+	if !strings.Contains(backups, "BACKUP VOLUMES (1)") || !strings.Contains(backups, "wp-preprod") || !strings.Contains(backups, "2026-") {
 		t.Fatalf("unexpected backups panel: %q", backups)
 	}
 

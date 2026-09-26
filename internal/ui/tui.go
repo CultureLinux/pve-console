@@ -53,6 +53,19 @@ type disableTFAMsg struct {
 	userid string
 	err    error
 }
+type usersMsg struct {
+	users []proxmox.User
+	err   error
+}
+type updatesMsg struct {
+	updates []proxmox.PackageUpdate
+	err     error
+}
+type backupsMsg struct {
+	jobs    []proxmox.BackupJob
+	volumes []proxmox.BackupVolume
+	err     error
+}
 
 type inputMode string
 
@@ -80,6 +93,7 @@ type Model struct {
 	viewMode        string
 	query           string
 	filter          string
+	guestTypeFilter string
 	sortBy          string
 	showSnaps       bool
 	showConfig      bool
@@ -99,7 +113,7 @@ type Model struct {
 }
 
 func New(client proxmox.Client) Model {
-	return Model{client: client, loading: true, filter: "all", sortBy: "id", viewMode: viewGuests, snapshotVMState: true, backupMode: "volumes"}
+	return Model{client: client, loading: true, filter: "all", guestTypeFilter: "all", sortBy: "id", viewMode: viewGuests, snapshotVMState: true, backupMode: "volumes"}
 }
 
 func Run(client proxmox.Client) error {
@@ -174,6 +188,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.message = ""
 		case "u":
 			m.toggleView()
+			if m.viewMode == viewUsers && len(m.data.users) == 0 {
+				m.loading = true
+				return m, m.loadUsers
+			}
 		case "g":
 			m.viewMode = viewGuests
 			m.showConfig = false
@@ -181,9 +199,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "p":
 			m.viewMode = viewUpdates
 			m.message = "package updates"
+			if len(m.data.updates) == 0 {
+				m.loading = true
+				return m, m.loadUpdates
+			}
 		case "b":
 			m.viewMode = viewBackups
 			m.message = "backup jobs"
+			if m.backupItemCount() == 0 {
+				m.loading = true
+				return m, m.loadBackups
+			}
 		case "tab":
 			if m.viewMode == viewBackups {
 				if m.backupMode == "jobs" {
@@ -192,6 +218,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.backupMode = "jobs"
 				}
 				m.selectedBackup = 0
+			} else if m.viewMode == viewGuests {
+				m.nextGuestTypeFilter()
+				m.selected = 0
 			}
 		case "f":
 			m.nextFilter()
@@ -208,6 +237,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.moveSelection(1)
 		case "r":
 			m.loading = true
+			if m.viewMode == viewUsers {
+				return m, m.loadUsers
+			}
+			if m.viewMode == viewUpdates {
+				return m, m.loadUpdates
+			}
+			if m.viewMode == viewBackups {
+				return m, m.loadBackups
+			}
 			return m, m.load
 		case "s":
 			if m.viewMode == viewUsers {
@@ -252,7 +290,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case loadMsg:
 		m.loading = false
-		m.data = snapshot(msg)
+		next := snapshot(msg)
+		next.users = m.data.users
+		next.updates = m.data.updates
+		next.backups = m.data.backups
+		next.backupVolumes = m.data.backupVolumes
+		next.updateErr = m.data.updateErr
+		next.backupErr = m.data.backupErr
+		m.data = next
 		if m.selected >= len(m.filteredGuests()) {
 			m.selected = len(m.filteredGuests()) - 1
 		}
@@ -324,6 +369,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.tfaUserID = msg.userid
 			return m, m.loadUserTFA(msg.userid)
 		}
+	case usersMsg:
+		m.loading = false
+		m.data.users = msg.users
+		if msg.err != nil {
+			m.message = msg.err.Error()
+		}
+	case updatesMsg:
+		m.loading = false
+		m.data.updates = msg.updates
+		m.data.updateErr = msg.err
+	case backupsMsg:
+		m.loading = false
+		m.data.backups = msg.jobs
+		m.data.backupVolumes = msg.volumes
+		m.data.backupErr = msg.err
 	}
 
 	return m, nil
@@ -392,36 +452,41 @@ func (m Model) load() tea.Msg {
 	}
 	s.storages = storages
 
-	users, err := m.client.Users(ctx)
-	if err == nil {
-		for i := range users {
-			entries, err := m.client.UserTFA(ctx, users[i].UserID)
-			if err == nil && len(entries) > 0 {
-				users[i].TFAEnabled = true
-			}
-		}
-		s.users = users
-	}
-	updates, err := m.client.PackageUpdates(ctx)
-	if err == nil {
-		s.updates = updates
-	} else {
-		s.updateErr = err
-	}
-	backups, err := m.client.BackupJobs(ctx)
-	if err == nil {
-		s.backups = backups
-	} else {
-		s.backupErr = err
-	}
-	backupVolumes, err := m.client.BackupVolumes(ctx, storages)
-	if err == nil {
-		s.backupVolumes = backupVolumes
-	} else if s.backupErr == nil {
-		s.backupErr = err
-	}
-
 	return loadMsg(s)
+}
+
+func (m Model) loadUsers() tea.Msg {
+	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+	defer cancel()
+	users, err := m.client.Users(ctx)
+	if err != nil {
+		return usersMsg{err: err}
+	}
+	for i := range users {
+		entries, err := m.client.UserTFA(ctx, users[i].UserID)
+		if err == nil && len(entries) > 0 {
+			users[i].TFAEnabled = true
+		}
+	}
+	return usersMsg{users: users}
+}
+
+func (m Model) loadUpdates() tea.Msg {
+	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+	defer cancel()
+	updates, err := m.client.PackageUpdates(ctx)
+	return updatesMsg{updates: updates, err: err}
+}
+
+func (m Model) loadBackups() tea.Msg {
+	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+	defer cancel()
+	jobs, jobsErr := m.client.BackupJobs(ctx)
+	volumes, volumesErr := m.client.BackupVolumes(ctx, m.data.storages)
+	if volumesErr != nil {
+		return backupsMsg{jobs: jobs, err: volumesErr}
+	}
+	return backupsMsg{jobs: jobs, volumes: volumes, err: jobsErr}
 }
 
 func (m Model) loadSnapshots(vmid int) tea.Cmd {
@@ -526,7 +591,7 @@ func (m Model) header(width int) string {
 	if meta == "" {
 		meta = "Proxmox"
 	}
-	meta += fmt.Sprintf(" | view:%s filter:%s sort:%s updates:%d", m.viewMode, m.filter, m.sortBy, len(m.data.updates))
+	meta += fmt.Sprintf(" | view:%s type:%s filter:%s sort:%s updates:%d", m.viewMode, m.guestTypeFilter, m.filter, m.sortBy, len(m.data.updates))
 	if m.query != "" {
 		meta += " | search:" + m.query
 	}
@@ -640,7 +705,7 @@ func (m Model) backupsPanel(width int, height int) string {
 	if m.backupMode == "jobs" {
 		b.WriteString(mutedStyle.Render(fmt.Sprintf("%-18s %-14s %-18s %-8s %-18s", "ID", "STORAGE", "SCHEDULE", "ENABLED", "VMIDS")))
 	} else {
-		b.WriteString(mutedStyle.Render(fmt.Sprintf("%-6s %-48s %-10s", "VMID", "VOLID", "SIZE")))
+		b.WriteString(mutedStyle.Render(fmt.Sprintf("%-6s %-22s %-17s %-10s", "VMID", "NAME", "DATE", "SIZE")))
 	}
 	b.WriteString("\n")
 	if m.data.backupErr != nil {
@@ -819,6 +884,8 @@ func (m Model) backupsDetailPanel(width int, height int) string {
 	if m.backupMode != "jobs" && len(m.data.backupVolumes) > 0 && m.selectedBackup < len(m.data.backupVolumes) {
 		volume := m.data.backupVolumes[m.selectedBackup]
 		b.WriteString(kv("VMID", fmt.Sprintf("%d", volume.VMID)))
+		b.WriteString(kv("Name", m.guestName(volume.VMID)))
+		b.WriteString(kv("Date", timeLabel(volume.CTime)))
 		b.WriteString(kv("Format", volume.Format))
 		b.WriteString(kv("Size", humanBytes(volume.Size)))
 		b.WriteString(kv("VolID", volume.VolID))
@@ -932,6 +999,9 @@ func (m Model) filteredGuests() []proxmox.Guest {
 	guests := make([]proxmox.Guest, 0, len(m.data.guests))
 	query := strings.ToLower(strings.TrimSpace(m.query))
 	for _, guest := range m.data.guests {
+		if m.guestTypeFilter != "all" && string(guest.Type) != m.guestTypeFilter {
+			continue
+		}
 		if m.filter != "all" && guest.Status != m.filter {
 			continue
 		}
@@ -966,6 +1036,17 @@ func (m *Model) nextFilter() {
 		m.filter = "stopped"
 	default:
 		m.filter = "all"
+	}
+}
+
+func (m *Model) nextGuestTypeFilter() {
+	switch m.guestTypeFilter {
+	case "all":
+		m.guestTypeFilter = string(proxmox.GuestTypeQEMU)
+	case string(proxmox.GuestTypeQEMU):
+		m.guestTypeFilter = string(proxmox.GuestTypeLXC)
+	default:
+		m.guestTypeFilter = "all"
 	}
 }
 
@@ -1032,7 +1113,19 @@ func (m Model) backupLine(index int) string {
 		return fmt.Sprintf("%-18s %-14s %-18s %-8t %-18s", truncate(job.ID, 18), truncate(job.Storage, 14), truncate(job.Schedule, 18), bool(job.Enabled), truncate(job.VMID, 18))
 	}
 	volume := m.data.backupVolumes[index]
-	return fmt.Sprintf("%-6d %-48s %-10s", volume.VMID, truncate(volume.VolID, 48), humanBytes(volume.Size))
+	return fmt.Sprintf("%-6d %-22s %-17s %-10s", volume.VMID, truncate(m.guestName(volume.VMID), 22), timeLabel(volume.CTime), humanBytes(volume.Size))
+}
+
+func (m Model) guestName(vmid int) string {
+	for _, guest := range m.data.guests {
+		if guest.VMID == vmid {
+			return guest.Name
+		}
+	}
+	if vmid == 0 {
+		return "-"
+	}
+	return fmt.Sprintf("%d", vmid)
 }
 
 func (m Model) footerText() string {
@@ -1058,7 +1151,7 @@ func (m Model) footerText() string {
 	if m.viewMode == viewBackups {
 		return "g guests  tab jobs/volumes  u users  p updates  r refresh  q quit"
 	}
-	return "enter config  u users  p updates  b backups  r refresh  / search  f filter  t sort  s snapshots  n new-snapshot  q quit"
+	return "tab vm/ct/all  enter config  u users  p updates  b backups  r refresh  / search  f status  t sort  s snapshots  n new-snapshot  q quit"
 }
 
 func kv(key string, value string) string {
@@ -1094,6 +1187,13 @@ func durationLabel(seconds int64) string {
 		return fmt.Sprintf("%dd %02dh", days, hours)
 	}
 	return fmt.Sprintf("%02dh%02dm", hours, int(d.Minutes())%60)
+}
+
+func timeLabel(timestamp int64) string {
+	if timestamp <= 0 {
+		return "-"
+	}
+	return time.Unix(timestamp, 0).Format("2006-01-02 15:04")
 }
 
 func bytesPair(used uint64, total uint64) string {

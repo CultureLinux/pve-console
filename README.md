@@ -117,6 +117,7 @@ Implemented health checks:
 TUI shortcuts:
 
 - `j/k` or arrow keys: select guest
+- guest view `tab`: cycle all/QEMU/LXC
 - `enter`: open selected guest configuration
 - `esc`: close configuration view or quit
 - `/`: search by VMID or name
@@ -131,6 +132,7 @@ TUI shortcuts:
 - `p`: package updates view
 - `b`: backup view, showing existing backup volumes by default
 - backup view `tab`: toggle existing volumes / scheduled jobs
+- backup volumes show VMID, VM name, readable date, and size
 - `g`: return to VM/LXC view
 - users view `s`: load TFA entries for the selected user
 - users view `x`: disable TFA after typing the selected userid
