@@ -234,6 +234,30 @@ func (c Client) BackupVolumes(ctx context.Context, storages []Storage) ([]Backup
 	return volumes, nil
 }
 
+func (c Client) RunBackup(ctx context.Context, vmid int, storage string) error {
+	node, err := c.nodeName()
+	if err != nil {
+		return err
+	}
+
+	args := []string{"create", fmt.Sprintf("/nodes/%s/vzdump", node), "-vmid", fmt.Sprintf("%d", vmid), "-mode", "snapshot"}
+	if storage != "" {
+		args = append(args, "-storage", storage)
+	}
+
+	if _, err := c.Runner.Run(ctx, "pvesh", args...); err != nil {
+		return fmt.Errorf("unable to start backup for guest %d: %w", vmid, err)
+	}
+	return nil
+}
+
+func (c Client) UpdateBackupSchedule(ctx context.Context, id string, schedule string) error {
+	if _, err := c.Runner.Run(ctx, "pvesh", "set", fmt.Sprintf("/cluster/backup/%s", id), "-schedule", schedule); err != nil {
+		return fmt.Errorf("unable to update backup job %s: %w", id, err)
+	}
+	return nil
+}
+
 func (c Client) guestsByType(ctx context.Context, node string, typ GuestType) ([]Guest, error) {
 	var guests []Guest
 	path := fmt.Sprintf("/nodes/%s/%s", node, pathForGuestType(typ))

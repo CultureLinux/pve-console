@@ -153,6 +153,37 @@ func TestBackupVolumes(t *testing.T) {
 	}
 }
 
+func TestRunBackupStartsVzdump(t *testing.T) {
+	runner := &command.MockRunner{
+		Responses: map[string]command.Result{
+			"pvesh create /nodes/pve/vzdump -vmid 300 -mode snapshot -storage backup-nas": {},
+		},
+	}
+	client := Client{Runner: runner, Node: "pve"}
+
+	err := client.RunBackup(context.Background(), 300, "backup-nas")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(runner.Calls) != 1 {
+		t.Fatalf("expected 1 call, got %#v", runner.Calls)
+	}
+}
+
+func TestUpdateBackupSchedule(t *testing.T) {
+	runner := &command.MockRunner{
+		Responses: map[string]command.Result{
+			"pvesh set /cluster/backup/daily -schedule 02:30": {},
+		},
+	}
+	client := Client{Runner: runner, Node: "pve"}
+
+	err := client.UpdateBackupSchedule(context.Background(), "daily", "02:30")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestUsers(t *testing.T) {
 	runner := &command.MockRunner{
 		Responses: map[string]command.Result{

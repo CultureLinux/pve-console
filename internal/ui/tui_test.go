@@ -88,12 +88,23 @@ func TestFooterShowsDisableTFAConfirmation(t *testing.T) {
 
 func TestFooterShowsSnapshotRAMToggle(t *testing.T) {
 	model := New(proxmox.Client{})
-	model.inputMode = inputSnapshot
-	model.input = "before-upgrade"
+	model.modalMode = modalSnapshot
 
 	got := model.footerText()
-	if !strings.Contains(got, "ram:on") || !strings.Contains(got, "before-upgrade") {
+	if !strings.Contains(got, "ram:on") || !strings.Contains(got, "snapshot modal") {
 		t.Fatalf("unexpected footer: %q", got)
+	}
+}
+
+func TestModalRendersSnapshotActions(t *testing.T) {
+	model := New(proxmox.Client{})
+	model.openModal(modalSnapshot, 300, "", "before-upgrade")
+
+	view := model.modal(80)
+	for _, want := range []string{"SNAPSHOT", "VMID 300", "before-upgrade", "Snap", "Annuler"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected %q in modal, got %q", want, view)
+		}
 	}
 }
 

@@ -39,6 +39,15 @@ type createSnapshotMsg struct {
 	name string
 	err  error
 }
+type runBackupMsg struct {
+	vmid int
+	err  error
+}
+type updateBackupScheduleMsg struct {
+	id       string
+	schedule string
+	err      error
+}
 type configMsg struct {
 	vmid   int
 	config proxmox.GuestConfig
@@ -68,12 +77,16 @@ type backupsMsg struct {
 }
 
 type inputMode string
+type modalMode string
 
 const (
 	inputNone       inputMode = ""
 	inputSearch     inputMode = "search"
-	inputSnapshot   inputMode = "snapshot"
 	inputDisableTFA inputMode = "disable-tfa"
+	modalNone       modalMode = ""
+	modalSnapshot   modalMode = "snapshot"
+	modalBackup     modalMode = "backup"
+	modalSchedule   modalMode = "schedule"
 	viewGuests      string    = "guests"
 	viewUsers       string    = "users"
 	viewUpdates     string    = "updates"
@@ -90,6 +103,11 @@ type Model struct {
 	loading         bool
 	inputMode       inputMode
 	input           string
+	modalMode       modalMode
+	modalField      int
+	modalInput      string
+	modalTargetVMID int
+	modalJobID      string
 	viewMode        string
 	query           string
 	filter          string
@@ -132,6 +150,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 	case tea.KeyMsg:
+		if m.modalMode != modalNone {
+			switch msg.String() {
+			case "esc":
+				m.closeModal()
+			case "tab", "right":
+				m.modalField = (m.modalField + 1) % 3
+			case "left":
+				m.modalField--
+				if m.modalField < 0 {
+					m.modalField = 2
+				}
+			case "enter":
+				return m.handleModalSubmit()
+			case "backspace":
+				if m.modalField == 0 && len(m.modalInput) > 0 {
+					m.modalInput = m.modalInput[:len(m.modalInput)-1]
+				}
+			default:
+				if m.modalField == 0 && len(msg.String()) == 1 {
+					m.modalInput += msg.String()
+				}
+			}
+			return m, nil
+		}
+
 		if m.inputMode != inputNone {
 			switch msg.String() {
 			case "esc":
@@ -140,10 +183,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "enter":
 				return m.handleInputSubmit()
 			case "tab", " ":
-				if m.inputMode == inputSnapshot {
-					m.snapshotVMState = !m.snapshotVMState
-					return m, nil
-				}
 				if len(msg.String()) == 1 {
 					m.input += msg.String()
 				}
@@ -274,9 +313,25 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			guest, ok := m.selectedGuest()
 			if ok {
-				m.inputMode = inputSnapshot
-				m.input = ""
-				m.message = fmt.Sprintf("snapshot base name for %d, enter for manual", guest.VMID)
+				m.openModal(modalSnapshot, guest.VMID, "", "")
+			}
+		case "m":
+			if m.viewMode == viewUsers || m.viewMode == viewUpdates {
+				return m, nil
+			}
+			vmid := 0
+			if m.viewMode == viewBackups {
+				vmid = m.selectedBackupVMID()
+			} else if guest, ok := m.selectedGuest(); ok {
+				vmid = guest.VMID
+			}
+			if vmid > 0 {
+				m.openModal(modalBackup, vmid, "", m.defaultBackupStorage())
+			}
+		case "e":
+			if m.viewMode == viewBackups && m.backupMode == "jobs" && len(m.data.backups) > 0 && m.selectedBackup < len(m.data.backups) {
+				job := m.data.backups[m.selectedBackup]
+				m.openModal(modalSchedule, 0, job.ID, job.Schedule)
 			}
 		case "x":
 			if m.viewMode == viewUsers {
@@ -340,6 +395,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.showSnaps = true
 			m.snapshotVMID = msg.vmid
 			return m, m.loadSnapshots(msg.vmid)
+		}
+	case runBackupMsg:
+		if msg.err != nil {
+			m.message = msg.err.Error()
+		} else {
+			m.message = fmt.Sprintf("backup started for %d", msg.vmid)
+			m.viewMode = viewBackups
+			return m, m.loadBackups
+		}
+	case updateBackupScheduleMsg:
+		if msg.err != nil {
+			m.message = msg.err.Error()
+		} else {
+			m.message = fmt.Sprintf("backup job %s scheduled %s", msg.id, msg.schedule)
+			m.viewMode = viewBackups
+			m.backupMode = "jobs"
+			return m, m.loadBackups
 		}
 	case configMsg:
 		if msg.vmid == m.configVMID {
@@ -409,6 +481,9 @@ func (m Model) View() string {
 	right := m.detailPanel(rightWidth, bodyHeight)
 	body := lipgloss.JoinHorizontal(lipgloss.Top, left, "  ", right)
 	footer := footerStyle.Width(contentWidth).Render(m.footerText())
+	if m.modalMode != modalNone {
+		body = lipgloss.JoinVertical(lipgloss.Center, body, m.modal(contentWidth))
+	}
 
 	return lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
 }
@@ -507,6 +582,24 @@ func (m Model) createSnapshot(vmid int, name string) tea.Cmd {
 	}
 }
 
+func (m Model) runBackup(vmid int, storage string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		err := m.client.RunBackup(ctx, vmid, storage)
+		return runBackupMsg{vmid: vmid, err: err}
+	}
+}
+
+func (m Model) updateBackupSchedule(id string, schedule string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		err := m.client.UpdateBackupSchedule(ctx, id, schedule)
+		return updateBackupScheduleMsg{id: id, schedule: schedule, err: err}
+	}
+}
+
 func (m Model) loadUserTFA(userid string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
@@ -525,6 +618,66 @@ func (m Model) disableUserTFA(userid string) tea.Cmd {
 	}
 }
 
+func (m *Model) openModal(mode modalMode, vmid int, jobID string, value string) {
+	m.modalMode = mode
+	m.modalField = 0
+	m.modalInput = value
+	m.modalTargetVMID = vmid
+	m.modalJobID = jobID
+	m.inputMode = inputNone
+	m.input = ""
+}
+
+func (m *Model) closeModal() {
+	m.modalMode = modalNone
+	m.modalField = 0
+	m.modalInput = ""
+	m.modalTargetVMID = 0
+	m.modalJobID = ""
+}
+
+func (m Model) handleModalSubmit() (tea.Model, tea.Cmd) {
+	if m.modalField == 2 {
+		m.closeModal()
+		return m, nil
+	}
+	if m.modalField == 0 {
+		m.modalField = 1
+		return m, nil
+	}
+
+	value := strings.TrimSpace(m.modalInput)
+	mode := m.modalMode
+	vmid := m.modalTargetVMID
+	jobID := m.modalJobID
+	m.closeModal()
+
+	switch mode {
+	case modalSnapshot:
+		if value == "" {
+			value = "manual-" + time.Now().Format("20060102-150405")
+		}
+		if err := validate.SnapshotName(value); err != nil {
+			m.message = err.Error()
+			return m, nil
+		}
+		m.message = fmt.Sprintf("creating snapshot %s for %d", value, vmid)
+		return m, m.createSnapshot(vmid, value)
+	case modalBackup:
+		m.message = fmt.Sprintf("starting backup for %d", vmid)
+		return m, m.runBackup(vmid, value)
+	case modalSchedule:
+		if value == "" {
+			m.message = "backup schedule is required"
+			return m, nil
+		}
+		m.message = fmt.Sprintf("updating backup job %s", jobID)
+		return m, m.updateBackupSchedule(jobID, value)
+	}
+
+	return m, nil
+}
+
 func (m Model) handleInputSubmit() (tea.Model, tea.Cmd) {
 	input := strings.TrimSpace(m.input)
 	mode := m.inputMode
@@ -535,21 +688,6 @@ func (m Model) handleInputSubmit() (tea.Model, tea.Cmd) {
 	case inputSearch:
 		m.query = input
 		m.selected = 0
-	case inputSnapshot:
-		guest, ok := m.selectedGuest()
-		if !ok {
-			return m, nil
-		}
-		if input == "" {
-			input = "manual-" + time.Now().Format("20060102-150405")
-		}
-		name := input
-		if err := validate.SnapshotName(name); err != nil {
-			m.message = err.Error()
-			return m, nil
-		}
-		m.message = fmt.Sprintf("creating snapshot %s for %d", name, guest.VMID)
-		return m, m.createSnapshot(guest.VMID, name)
 	case inputDisableTFA:
 		user, ok := m.selectedUserModel()
 		if !ok {
@@ -872,6 +1010,8 @@ func (m Model) backupsDetailPanel(width int, height int) string {
 	b.WriteString(kv("Volumes", fmt.Sprintf("%d", len(m.data.backupVolumes))))
 	b.WriteString(kv("Mode", m.backupMode))
 	b.WriteString(kv("Toggle", "tab"))
+	b.WriteString(kv("Manual", "m"))
+	b.WriteString(kv("Schedule", "e"))
 	b.WriteString("\n")
 	if m.backupMode == "jobs" && len(m.data.backups) > 0 && m.selectedBackup < len(m.data.backups) {
 		job := m.data.backups[m.selectedBackup]
@@ -896,6 +1036,60 @@ func (m Model) backupsDetailPanel(width int, height int) string {
 		b.WriteString("\n")
 	}
 	return panelStyle.Width(width).Height(height).Render(b.String())
+}
+
+func (m Model) modal(width int) string {
+	title := "SNAPSHOT"
+	label := "Name"
+	confirm := "Snap"
+	context := fmt.Sprintf("VMID %d", m.modalTargetVMID)
+	if m.modalMode == modalBackup {
+		title = "BACKUP"
+		label = "Storage"
+		confirm = "Backup"
+		context = fmt.Sprintf("VMID %d", m.modalTargetVMID)
+	}
+	if m.modalMode == modalSchedule {
+		title = "BACKUP SCHEDULE"
+		label = "Schedule"
+		confirm = "Save"
+		context = "Job " + m.modalJobID
+	}
+
+	input := m.modalInput
+	if input == "" {
+		input = " "
+	}
+	inputStyle := rowStyle
+	if m.modalField == 0 {
+		inputStyle = selectedRowStyle
+	}
+	confirmStyle := rowStyle
+	if m.modalField == 1 {
+		confirmStyle = selectedRowStyle
+	}
+	cancelStyle := rowStyle
+	if m.modalField == 2 {
+		cancelStyle = selectedRowStyle
+	}
+
+	var b strings.Builder
+	b.WriteString(panelTitleStyle.Render(title))
+	b.WriteString("\n")
+	b.WriteString(mutedStyle.Render(context))
+	b.WriteString("\n\n")
+	b.WriteString(kv(label, inputStyle.Width(28).Render(input)))
+	b.WriteString("\n")
+	b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, confirmStyle.Padding(0, 2).Render(confirm), "  ", cancelStyle.Padding(0, 2).Render("Annuler")))
+	b.WriteString("\n")
+	b.WriteString(mutedStyle.Render("tab select  enter apply  esc cancel"))
+
+	return lipgloss.NewStyle().
+		Width(min(48, max(32, width-8))).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("81")).
+		Padding(1, 2).
+		Render(b.String())
 }
 
 func (m Model) configPanel(width int, height int) string {
@@ -1116,6 +1310,27 @@ func (m Model) backupLine(index int) string {
 	return fmt.Sprintf("%-6d %-22s %-17s %-10s", volume.VMID, truncate(m.guestName(volume.VMID), 22), timeLabel(volume.CTime), humanBytes(volume.Size))
 }
 
+func (m Model) selectedBackupVMID() int {
+	if m.backupMode != "jobs" {
+		if len(m.data.backupVolumes) > 0 && m.selectedBackup < len(m.data.backupVolumes) {
+			return m.data.backupVolumes[m.selectedBackup].VMID
+		}
+		return 0
+	}
+	if len(m.data.backups) == 0 || m.selectedBackup >= len(m.data.backups) {
+		return 0
+	}
+	for _, part := range strings.FieldsFunc(m.data.backups[m.selectedBackup].VMID, func(r rune) bool {
+		return r == ',' || r == ';' || r == ' '
+	}) {
+		var vmid int
+		if _, err := fmt.Sscanf(part, "%d", &vmid); err == nil && vmid > 0 {
+			return vmid
+		}
+	}
+	return 0
+}
+
 func (m Model) guestName(vmid int) string {
 	for _, guest := range m.data.guests {
 		if guest.VMID == vmid {
@@ -1128,13 +1343,38 @@ func (m Model) guestName(vmid int) string {
 	return fmt.Sprintf("%d", vmid)
 }
 
+func (m Model) defaultBackupStorage() string {
+	for _, job := range m.data.backups {
+		if job.Storage != "" {
+			return job.Storage
+		}
+	}
+	for _, storage := range m.data.storages {
+		if bool(storage.Active) && strings.Contains(strings.ToLower(storage.Name), "backup") {
+			return storage.Name
+		}
+	}
+	for _, storage := range m.data.storages {
+		if bool(storage.Active) {
+			return storage.Name
+		}
+	}
+	return ""
+}
+
 func (m Model) footerText() string {
-	if m.inputMode == inputSnapshot {
+	if m.modalMode == modalSnapshot {
 		ram := "on"
 		if !m.snapshotVMState {
 			ram = "off"
 		}
-		return "snapshot name: " + m.input + "  ram:" + ram + "  tab toggle-ram  enter create  esc cancel"
+		return "snapshot modal  ram:" + ram + "  enter snap  esc cancel"
+	}
+	if m.modalMode == modalBackup {
+		return "backup modal  enter backup  esc cancel"
+	}
+	if m.modalMode == modalSchedule {
+		return "schedule modal  enter save  esc cancel"
 	}
 	if m.inputMode == inputDisableTFA {
 		return "confirm userid: " + m.input + "  enter disable TFA  esc cancel"
@@ -1149,9 +1389,9 @@ func (m Model) footerText() string {
 		return "g guests  u users  b backups  r refresh  q quit"
 	}
 	if m.viewMode == viewBackups {
-		return "g guests  tab jobs/volumes  u users  p updates  r refresh  q quit"
+		return "g guests  tab jobs/volumes  m manual-backup  e edit-schedule  u users  p updates  r refresh  q quit"
 	}
-	return "tab vm/ct/all  enter config  u users  p updates  b backups  r refresh  / search  f status  t sort  s snapshots  n new-snapshot  q quit"
+	return "tab vm/ct/all  enter config  u users  p updates  b backups  m backup  r refresh  / search  f status  t sort  s snapshots  n snapshot  q quit"
 }
 
 func kv(key string, value string) string {
