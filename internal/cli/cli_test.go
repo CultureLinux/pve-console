@@ -18,8 +18,8 @@ func TestRunVersion(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("expected exit code 0, got %d", code)
 	}
-	if got := strings.TrimSpace(stdout.String()); got != "pve-console dev" {
-		t.Fatalf("expected version output %q, got %q", "pve-console dev", got)
+	if got := strings.TrimSpace(stdout.String()); got != "pve-console 0.1.0" {
+		t.Fatalf("expected version output %q, got %q", "pve-console 0.1.0", got)
 	}
 	if stderr.Len() != 0 {
 		t.Fatalf("expected empty stderr, got %q", stderr.String())
@@ -35,8 +35,8 @@ func TestRunVersionWithDebug(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("expected exit code 0, got %d", code)
 	}
-	if got := strings.TrimSpace(stdout.String()); got != "pve-console dev" {
-		t.Fatalf("expected version output %q, got %q", "pve-console dev", got)
+	if got := strings.TrimSpace(stdout.String()); got != "pve-console 0.1.0" {
+		t.Fatalf("expected version output %q, got %q", "pve-console 0.1.0", got)
 	}
 	if !strings.Contains(stderr.String(), "debug: command=version") {
 		t.Fatalf("expected debug output, got %q", stderr.String())

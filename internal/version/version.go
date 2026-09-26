@@ -4,7 +4,7 @@ import "fmt"
 
 var (
 	Name    = "pve-console"
-	Version = "dev"
+	Version = "0.1.0"
 	Commit  = "none"
 	Date    = "unknown"
 )

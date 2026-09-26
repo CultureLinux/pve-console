@@ -12,6 +12,7 @@ import (
 
 	"pvc/internal/proxmox"
 	"pvc/internal/validate"
+	"pvc/internal/version"
 )
 
 type snapshot struct {
@@ -137,11 +138,19 @@ type Model struct {
 }
 
 func New(client proxmox.Client) Model {
-	return Model{client: client, loading: true, filter: "all", guestTypeFilter: "all", sortBy: "id", viewMode: viewGuests, snapshotVMState: true, backupMode: "volumes", modalMode: modalStartup}
+	return NewWithStartup(client, true)
 }
 
-func Run(client proxmox.Client) error {
-	program := tea.NewProgram(New(client), tea.WithAltScreen())
+func NewWithStartup(client proxmox.Client, showStartup bool) Model {
+	model := Model{client: client, loading: true, filter: "all", guestTypeFilter: "all", sortBy: "id", viewMode: viewGuests, snapshotVMState: true, backupMode: "volumes"}
+	if showStartup {
+		model.modalMode = modalStartup
+	}
+	return model
+}
+
+func Run(client proxmox.Client, showStartup bool) error {
+	program := tea.NewProgram(NewWithStartup(client, showStartup), tea.WithAltScreen())
 	_, err := program.Run()
 	return err
 }
@@ -1264,6 +1273,7 @@ func (m Model) modal(width int) string {
 func (m Model) startupModal(width int) string {
 	lines := []string{
 		warnStyle.Render("EXPERIMENTAL"),
+		version.String(),
 		"",
 		"pve-console is still experimental.",
 		"Use it carefully on production hosts.",

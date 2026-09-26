@@ -42,4 +42,4 @@ deploy:proxmox:
   script:
     - scp -o StrictHostKeyChecking=accept-new bin/pve-console root@192.168.1.51:/tmp/pve-console
     - ssh -o StrictHostKeyChecking=accept-new root@192.168.1.51 'install -o root -g root -m 0755 /tmp/pve-console /usr/local/sbin/pve-console && rm -f /tmp/pve-console && /usr/local/sbin/pve-console version'
-  when: manual
+  #when: manual

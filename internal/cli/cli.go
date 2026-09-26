@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"pvc/internal/command"
+	"pvc/internal/config"
 	"pvc/internal/health"
 	"pvc/internal/platform"
 	"pvc/internal/proxmox"
@@ -179,7 +180,11 @@ func runTUI(client proxmox.Client, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "Unable to run TUI: pve-console must be run as root.")
 		return 3
 	}
-	if err := ui.Run(client); err != nil {
+	_, created, err := config.Ensure(version.Version)
+	if err != nil {
+		return printErrorWithCode(stderr, "Unable to initialize pve-console configuration.", err, 3)
+	}
+	if err := ui.Run(client, created); err != nil {
 		return printError(stderr, "Unable to run TUI.", err)
 	}
 	return 0
