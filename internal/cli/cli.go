@@ -17,19 +17,19 @@ import (
 	"pvc/internal/version"
 )
 
-const usage = `pvm - Proxmox CLI Manager
+const usage = `pve-console - Proxmox CLI Manager
 
 Usage:
-  pvm [global options] <command>
-  pvm
-  pvm version
-  pvm status [--json]
-  pvm vm list [--json]
-  pvm vm status <vmid> [--json]
-  pvm storage list [--json]
-  pvm check [--json]
-  pvm snapshot list <vmid> [--json]
-  pvm snapshot create <vmid> [name] [--description text]
+  pve-console [global options] <command>
+  pve-console
+  pve-console version
+  pve-console status [--json]
+  pve-console vm list [--json]
+  pve-console vm status <vmid> [--json]
+  pve-console storage list [--json]
+  pve-console check [--json]
+  pve-console snapshot list <vmid> [--json]
+  pve-console snapshot create <vmid> [name] [--description text]
 
 Global options:
   -v, --verbose   Enable verbose output

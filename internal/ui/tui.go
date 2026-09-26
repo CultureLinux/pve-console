@@ -502,7 +502,7 @@ func (m Model) createSnapshot(vmid int, name string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		err := m.client.CreateSnapshot(ctx, vmid, name, "Created from pvm TUI", m.snapshotVMState)
+		err := m.client.CreateSnapshot(ctx, vmid, name, "Created from pve-console TUI", m.snapshotVMState)
 		return createSnapshotMsg{vmid: vmid, name: name, err: err}
 	}
 }
@@ -582,7 +582,7 @@ func tick() tea.Cmd {
 }
 
 func (m Model) header(width int) string {
-	title := "pvm"
+	title := "pve-console"
 	node := m.data.node.Name
 	if node == "" {
 		node = "loading"

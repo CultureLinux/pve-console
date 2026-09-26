@@ -3,7 +3,7 @@ package version
 import "fmt"
 
 var (
-	Name    = "pvm"
+	Name    = "pve-console"
 	Version = "dev"
 	Commit  = "none"
 	Date    = "unknown"

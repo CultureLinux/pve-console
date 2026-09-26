@@ -1,6 +1,6 @@
 # PVC
 
-`pvm` is a lightweight Proxmox CLI manager intended to run locally on a Proxmox VE node.
+`pve-console` is a lightweight Proxmox CLI manager intended to run locally on a Proxmox VE node.
 
 The project currently provides local Proxmox read commands, health checks, and an interactive terminal UI backed by `pvesh` JSON.
 
@@ -29,7 +29,7 @@ make build
 This produces:
 
 ```text
-bin/pvm
+bin/pve-console
 ```
 
 Equivalent PowerShell command from Windows:
@@ -38,31 +38,31 @@ Equivalent PowerShell command from Windows:
 $env:GOOS="linux"
 $env:GOARCH="amd64"
 $env:CGO_ENABLED="0"
-& 'C:\Program Files\Go\bin\go.exe' build -o bin/pvm ./cmd/pvm
+& 'C:\Program Files\Go\bin\go.exe' build -o bin/pve-console ./cmd/pvm
 ```
 
 ## Run
 
 ```bash
-./bin/pvm
-./bin/pvm tui
-./bin/pvm version
-./bin/pvm status
-./bin/pvm vm list
-./bin/pvm vm status 300
-./bin/pvm storage list
-./bin/pvm check
-./bin/pvm snapshot list 300
-./bin/pvm snapshot create 300 before-upgrade --description "Before upgrade"
+./bin/pve-console
+./bin/pve-console tui
+./bin/pve-console version
+./bin/pve-console status
+./bin/pve-console vm list
+./bin/pve-console vm status 300
+./bin/pve-console storage list
+./bin/pve-console check
+./bin/pve-console snapshot list 300
+./bin/pve-console snapshot create 300 before-upgrade --description "Before upgrade"
 ```
 
 Global options:
 
 ```bash
-./bin/pvm --debug version
-./bin/pvm --verbose version
-./bin/pvm --json status
-./bin/pvm --json check
+./bin/pve-console --debug version
+./bin/pve-console --verbose version
+./bin/pve-console --json status
+./bin/pve-console --json check
 ```
 
 ## Development
@@ -83,31 +83,31 @@ Core runtime foundations:
 
 Implemented Proxmox read commands:
 
-- `pvm`
-- `pvm tui`
-- `pvm status`
-- `pvm status --json`
-- `pvm vm list`
-- `pvm vm list --json`
-- `pvm vm status <vmid>`
-- `pvm vm status <vmid> --json`
-- `pvm storage list`
-- `pvm storage list --json`
-- `pvm snapshot list <vmid>`
-- `pvm snapshot list <vmid> --json`
-- `pvm snapshot create <vmid> [name]`
-- `pvm snapshot create <vmid> [name] --description <text>`
+- `pve-console`
+- `pve-console tui`
+- `pve-console status`
+- `pve-console status --json`
+- `pve-console vm list`
+- `pve-console vm list --json`
+- `pve-console vm status <vmid>`
+- `pve-console vm status <vmid> --json`
+- `pve-console storage list`
+- `pve-console storage list --json`
+- `pve-console snapshot list <vmid>`
+- `pve-console snapshot list <vmid> --json`
+- `pve-console snapshot create <vmid> [name]`
+- `pve-console snapshot create <vmid> [name] --description <text>`
 
 Implemented health checks:
 
-- `pvm check`
-- `pvm check --json`
+- `pve-console check`
+- `pve-console check --json`
 - node version/kernel presence
 - filesystem usage from `df -P`
 - storage usage and active state
 - guest running/stopped summary
 
-`pvm check` exit codes:
+`pve-console check` exit codes:
 
 - `0`: OK or INFO only
 - `1`: WARN

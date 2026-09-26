@@ -1,4 +1,4 @@
-APP := pvm
+APP := pve-console
 GO ?= go
 BIN_DIR := bin
 VERSION ?= dev
