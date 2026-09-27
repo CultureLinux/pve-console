@@ -46,6 +46,7 @@ type runBackupMsg struct {
 }
 type updateBackupScheduleMsg struct {
 	id       string
+	storage  string
 	schedule string
 	vmids    string
 	err      error
@@ -186,7 +187,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "enter":
 				return m.handleModalSubmit()
 			case "tab", "right":
-				if m.modalMode == modalBackup && m.modalField == 0 && msg.String() == "right" {
+				if (m.modalMode == modalBackup || m.modalMode == modalSchedule) && m.modalField == 0 && msg.String() == "right" {
 					m.nextModalStorage(1)
 				} else {
 					m.modalField = (m.modalField + 1) % m.modalFieldCount()
@@ -197,7 +198,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.modalField = m.modalFieldCount() - 1
 				}
 			case "left":
-				if m.modalMode == modalBackup && m.modalField == 0 {
+				if (m.modalMode == modalBackup || m.modalMode == modalSchedule) && m.modalField == 0 {
 					m.nextModalStorage(-1)
 				} else {
 					m.modalField--
@@ -206,34 +207,34 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 			case "up":
-				if m.modalMode == modalBackup && m.modalField == 0 {
+				if (m.modalMode == modalBackup || m.modalMode == modalSchedule) && m.modalField == 0 {
 					m.nextModalStorage(-1)
-				} else if m.modalMode == modalSchedule && m.modalField == 1 {
+				} else if m.modalMode == modalSchedule && m.modalField == 2 {
 					m.nextModalGuest(-1)
 				}
 			case "down":
-				if m.modalMode == modalBackup && m.modalField == 0 {
+				if (m.modalMode == modalBackup || m.modalMode == modalSchedule) && m.modalField == 0 {
 					m.nextModalStorage(1)
-				} else if m.modalMode == modalSchedule && m.modalField == 1 {
+				} else if m.modalMode == modalSchedule && m.modalField == 2 {
 					m.nextModalGuest(1)
 				}
 			case " ":
-				if m.modalMode == modalSchedule && m.modalField == 1 {
+				if m.modalMode == modalSchedule && m.modalField == 2 {
 					m.toggleModalGuest()
+				} else if m.modalMode == modalSchedule && m.modalField == 1 {
+					m.modalInput += msg.String()
 				} else if m.modalMode != modalBackup && m.modalField == 0 {
 					m.modalInput += msg.String()
 				}
 			case "backspace":
-				if m.modalMode != modalBackup && m.modalField == 0 && len(m.modalInput) > 0 {
+				if ((m.modalMode == modalSchedule && m.modalField == 1) || (m.modalMode != modalBackup && m.modalMode != modalSchedule && m.modalField == 0)) && len(m.modalInput) > 0 {
 					m.modalInput = m.modalInput[:len(m.modalInput)-1]
-				} else if m.modalMode == modalSchedule && m.modalField == 1 && len(m.modalVMIDs) > 0 {
-					m.modalVMIDs = m.modalVMIDs[:len(m.modalVMIDs)-1]
 				}
 			default:
-				if m.modalMode != modalBackup && m.modalField == 0 && len(msg.String()) == 1 {
+				if m.modalMode == modalSchedule && m.modalField == 1 && len(msg.String()) == 1 {
 					m.modalInput += msg.String()
-				} else if m.modalMode == modalSchedule && m.modalField == 1 && len(msg.String()) == 1 {
-					m.modalVMIDs += msg.String()
+				} else if m.modalMode != modalBackup && m.modalMode != modalSchedule && m.modalField == 0 && len(msg.String()) == 1 {
+					m.modalInput += msg.String()
 				}
 			}
 			return m, nil
@@ -410,7 +411,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if !ok {
 					return m, nil
 				}
-				m.openModal(modalSchedule, 0, job.ID, job.Schedule)
+				m.openModal(modalSchedule, 0, job.ID, job.Storage)
+				m.modalInput = job.Schedule
 				m.modalVMIDs = job.VMID
 			}
 		case "x":
@@ -664,12 +666,12 @@ func (m Model) runBackup(vmid int, storage string) tea.Cmd {
 	}
 }
 
-func (m Model) updateBackupJob(id string, schedule string, vmids string) tea.Cmd {
+func (m Model) updateBackupJob(id string, storage string, schedule string, vmids string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		err := m.client.UpdateBackupJob(ctx, id, schedule, vmids)
-		return updateBackupScheduleMsg{id: id, schedule: schedule, vmids: vmids, err: err}
+		err := m.client.UpdateBackupJob(ctx, id, storage, schedule, vmids)
+		return updateBackupScheduleMsg{id: id, storage: storage, schedule: schedule, vmids: vmids, err: err}
 	}
 }
 
@@ -759,7 +761,7 @@ func (m Model) handleModalSubmit() (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.message = fmt.Sprintf("updating backup job %s", jobID)
-		return m, m.updateBackupJob(jobID, value, vmids)
+		return m, m.updateBackupJob(jobID, storage, value, vmids)
 	}
 
 	return m, nil
@@ -767,7 +769,7 @@ func (m Model) handleModalSubmit() (tea.Model, tea.Cmd) {
 
 func (m Model) modalFieldCount() int {
 	if m.modalMode == modalSchedule {
-		return 4
+		return 5
 	}
 	return 3
 }
@@ -1273,6 +1275,9 @@ func (m Model) modal(width int) string {
 	if m.modalMode == modalHelp {
 		return m.helpModal(width)
 	}
+	if m.modalMode == modalSchedule {
+		return m.scheduleModal(width)
+	}
 
 	title := "SNAPSHOT"
 	label := "Name"
@@ -1350,6 +1355,84 @@ func (m Model) modal(width int) string {
 		Render(b.String())
 }
 
+func (m Model) scheduleModal(width int) string {
+	lastField := m.modalFieldCount() - 1
+	confirmField := lastField - 1
+	storageStyle := rowStyle
+	if m.modalField == 0 {
+		storageStyle = selectedRowStyle
+	}
+	scheduleStyle := rowStyle
+	if m.modalField == 1 {
+		scheduleStyle = selectedRowStyle
+	}
+	confirmStyle := rowStyle
+	if m.modalField == confirmField {
+		confirmStyle = selectedRowStyle
+	}
+	cancelStyle := rowStyle
+	if m.modalField == lastField {
+		cancelStyle = selectedRowStyle
+	}
+
+	input := blankInput(m.modalInput)
+	storage := "< " + m.selectedModalStorage() + " >"
+	var b strings.Builder
+	b.WriteString(panelTitleStyle.Render("BACKUP SCHEDULE"))
+	b.WriteString("\n")
+	b.WriteString(mutedStyle.Render("Job " + m.modalJobID))
+	b.WriteString("\n\n")
+	b.WriteString(kv("Storage", storageStyle.Width(30).Render(storage)))
+	b.WriteString(kv("Schedule", scheduleStyle.Width(30).Render(input)))
+	b.WriteString("\n")
+	b.WriteString(panelTitleStyle.Render("VMIDS"))
+	b.WriteString("\n")
+	b.WriteString(m.modalGuestChecklist(max(28, min(44, width-12)), 8))
+	b.WriteString("\n")
+	b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, confirmStyle.Padding(0, 2).Render("Save"), "  ", cancelStyle.Padding(0, 2).Render("Annuler")))
+	b.WriteString("\n")
+	b.WriteString(mutedStyle.Render("storage: arrows  schedule: type/backspace  vmids: up/down space  tab select  enter apply  esc cancel"))
+
+	return lipgloss.NewStyle().
+		Width(min(62, max(44, width-8))).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("81")).
+		Padding(1, 2).
+		Render(b.String())
+}
+
+func (m Model) modalGuestChecklist(width int, rows int) string {
+	if len(m.data.guests) == 0 {
+		return mutedStyle.Render("no guests loaded")
+	}
+	start := 0
+	if m.modalGuest >= rows {
+		start = m.modalGuest - rows + 1
+	}
+	end := min(len(m.data.guests), start+rows)
+	selected := map[string]bool{}
+	for _, part := range vmidParts(m.modalVMIDs) {
+		selected[part] = true
+	}
+	var b strings.Builder
+	for i := start; i < end; i++ {
+		guest := m.data.guests[i]
+		mark := " "
+		if selected[fmt.Sprintf("%d", guest.VMID)] {
+			mark = "x"
+		}
+		line := fmt.Sprintf("[%s] %-5d %s", mark, guest.VMID, truncate(guest.Name, max(8, width-12)))
+		style := rowStyle
+		if m.modalField == 2 && i == m.modalGuest {
+			style = selectedRowStyle
+		}
+		b.WriteString(style.Width(width).Render(line))
+		if i < end-1 {
+			b.WriteString("\n")
+		}
+	}
+	return b.String()
+}
 func (m Model) startupModal(width int) string {
 	lines := []string{
 		warnStyle.Render("EXPERIMENTAL"),

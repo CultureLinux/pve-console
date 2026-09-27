@@ -173,12 +173,12 @@ func TestRunBackupStartsVzdump(t *testing.T) {
 func TestUpdateBackupJob(t *testing.T) {
 	runner := &command.MockRunner{
 		Responses: map[string]command.Result{
-			"pvesh set /cluster/backup/daily -schedule 02:30 -vmid 300,302": {},
+			"pvesh set /cluster/backup/daily -schedule 02:30 -storage backup-nas -vmid 300,302": {},
 		},
 	}
 	client := Client{Runner: runner, Node: "pve"}
 
-	err := client.UpdateBackupJob(context.Background(), "daily", "02:30", "300,302")
+	err := client.UpdateBackupJob(context.Background(), "daily", "backup-nas", "02:30", "300,302")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

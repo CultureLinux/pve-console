@@ -162,11 +162,13 @@ func TestModalRendersBackupStorageSelect(t *testing.T) {
 func TestModalRendersScheduleVMIDs(t *testing.T) {
 	model := New(proxmox.Client{})
 	model.data.guests = []proxmox.Guest{{VMID: 300, Name: "wp-preprod"}, {VMID: 302, Name: "worker"}}
-	model.openModal(modalSchedule, 0, "daily", "02:30")
+	model.data.storages = []proxmox.Storage{{Name: "local", Active: true}, {Name: "backup-nas", Active: true}}
+	model.openModal(modalSchedule, 0, "daily", "backup-nas")
+	model.modalInput = "02:30"
 	model.modalVMIDs = "300,302"
 
 	view := model.modal(80)
-	for _, want := range []string{"BACKUP SCHEDULE", "Job daily", "Schedule", "02:30", "VMIDs", "300,302", "Guest", "[x] 300 wp-preprod", "Save"} {
+	for _, want := range []string{"BACKUP SCHEDULE", "Job daily", "Storage", "< backup-nas >", "Schedule", "02:30", "VMIDS", "wp-preprod", "Save"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("expected %q in modal, got %q", want, view)
 		}

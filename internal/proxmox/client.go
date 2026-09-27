@@ -251,8 +251,11 @@ func (c Client) RunBackup(ctx context.Context, vmid int, storage string) error {
 	return nil
 }
 
-func (c Client) UpdateBackupJob(ctx context.Context, id string, schedule string, vmids string) error {
+func (c Client) UpdateBackupJob(ctx context.Context, id string, storage string, schedule string, vmids string) error {
 	args := []string{"set", fmt.Sprintf("/cluster/backup/%s", id), "-schedule", schedule}
+	if storage != "" {
+		args = append(args, "-storage", storage)
+	}
 	if vmids != "" {
 		args = append(args, "-vmid", vmids)
 	}
