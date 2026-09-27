@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	"pvc/internal/proxmox"
 )
 
@@ -215,5 +217,37 @@ func TestUpdatesAndBackupsPanels(t *testing.T) {
 	jobs := model.backupsPanel(100, 20)
 	if !strings.Contains(jobs, "BACKUP JOBS (1)") || !strings.Contains(jobs, "backup-nas") {
 		t.Fatalf("unexpected backup jobs panel: %q", jobs)
+	}
+}
+func TestEscFromSectionReturnsGuests(t *testing.T) {
+	model := NewWithStartup(proxmox.Client{}, false)
+	model.viewMode = viewBackups
+	model.message = "backup jobs"
+
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if cmd != nil {
+		t.Fatalf("expected no quit command")
+	}
+	next := updated.(Model)
+	if next.viewMode != viewGuests {
+		t.Fatalf("expected guests view, got %q", next.viewMode)
+	}
+	if next.message != "" {
+		t.Fatalf("expected cleared message, got %q", next.message)
+	}
+}
+
+func TestViewCentersModalOverlay(t *testing.T) {
+	model := NewWithStartup(proxmox.Client{}, false)
+	model.width = 100
+	model.height = 30
+	model.openModal(modalSnapshot, 300, "", "before-upgrade")
+
+	view := model.View()
+	if !strings.Contains(view, "SNAPSHOT") || !strings.Contains(view, "VMID 300") {
+		t.Fatalf("expected snapshot modal in view, got %q", view)
+	}
+	if strings.LastIndex(view, "SNAPSHOT") > strings.LastIndex(view, "snapshot modal") {
+		t.Fatalf("expected modal overlay before footer, got %q", view)
 	}
 }

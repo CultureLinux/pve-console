@@ -273,6 +273,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.message = ""
 				return m, nil
 			}
+			if m.showSnaps {
+				m.showSnaps = false
+				m.message = ""
+				return m, nil
+			}
+			if m.viewMode != viewGuests {
+				m.viewMode = viewGuests
+				m.message = ""
+				return m, nil
+			}
 			return m, tea.Quit
 		case "enter":
 			if m.viewMode == viewUsers {
@@ -536,11 +546,19 @@ func (m Model) View() string {
 	right := m.detailPanel(rightWidth, bodyHeight)
 	body := lipgloss.JoinHorizontal(lipgloss.Top, left, "  ", right)
 	footer := footerStyle.Width(contentWidth).Render(m.footerText())
+	base := lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
 	if m.modalMode != modalNone {
-		body = lipgloss.JoinVertical(lipgloss.Center, body, m.modal(contentWidth))
+		return overlayView(base, m.modal(contentWidth), contentWidth, height)
+	}
+	if input := m.inputModal(contentWidth); input != "" {
+		return overlayView(base, input, contentWidth, height)
+	}
+	if m.showConfig {
+		modalWidth := min(86, max(56, contentWidth-8))
+		return overlayView(base, m.configPanel(modalWidth, max(12, height-8)), contentWidth, height)
 	}
 
-	return lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
+	return base
 }
 
 func (m Model) leftPanel(width int, height int) string {
@@ -1022,10 +1040,6 @@ func (m Model) detailPanel(width int, height int) string {
 	if m.viewMode == viewBackups {
 		return m.backupsDetailPanel(width, height)
 	}
-	if m.showConfig {
-		return m.configPanel(width, height)
-	}
-
 	var b strings.Builder
 	b.WriteString(panelTitleStyle.Render("DETAIL"))
 	b.WriteString("\n")
@@ -1186,6 +1200,72 @@ func (m Model) backupsDetailPanel(width int, height int) string {
 	return panelStyle.Width(width).Height(height).Render(b.String())
 }
 
+func (m Model) inputModal(width int) string {
+	if m.inputMode == inputNone {
+		return ""
+	}
+
+	title := "SEARCH"
+	body := []string{kv("Query", selectedRowStyle.Width(32).Render(blankInput(m.input))), "enter apply  esc cancel"}
+	if m.inputMode == inputDisableTFA {
+		user := ""
+		if selected, ok := m.selectedUserModel(); ok {
+			user = selected.UserID
+		}
+		title = "DISABLE TFA"
+		body = []string{
+			kv("User", user),
+			kv("Confirm", selectedRowStyle.Width(32).Render(blankInput(m.input))),
+			warnStyle.Render("Type the user id to confirm."),
+			"enter disable TFA  esc cancel",
+		}
+	}
+
+	lines := []string{panelTitleStyle.Render(title), ""}
+	lines = append(lines, body...)
+	return lipgloss.NewStyle().
+		Width(min(52, max(36, width-8))).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("81")).
+		Padding(1, 2).
+		Render(strings.Join(lines, "\n"))
+}
+
+func blankInput(value string) string {
+	if value == "" {
+		return " "
+	}
+	return value
+}
+
+func overlayView(base string, modal string, width int, height int) string {
+	if modal == "" {
+		return base
+	}
+	lines := strings.Split(base, "\n")
+	modalLines := strings.Split(modal, "\n")
+	if len(lines) < height {
+		for len(lines) < height {
+			lines = append(lines, "")
+		}
+	}
+
+	modalHeight := len(modalLines)
+	modalWidth := 0
+	for _, line := range modalLines {
+		modalWidth = max(modalWidth, lipgloss.Width(line))
+	}
+	startRow := max(1, (height-modalHeight)/2)
+	startCol := max(0, (width-modalWidth)/2)
+	for i, line := range modalLines {
+		row := startRow + i
+		if row >= len(lines) {
+			break
+		}
+		lines[row] = strings.Repeat(" ", startCol) + line
+	}
+	return strings.Join(lines, "\n")
+}
 func (m Model) modal(width int) string {
 	if m.modalMode == modalStartup {
 		return m.startupModal(width)
