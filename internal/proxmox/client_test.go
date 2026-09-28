@@ -137,6 +137,40 @@ func TestParseAptUpdates(t *testing.T) {
 	}
 }
 
+func TestDeleteAndRollbackSnapshot(t *testing.T) {
+	runner := &command.MockRunner{
+		Responses: map[string]command.Result{
+			"pvesh delete /nodes/pve/qemu/300/snapshot/before-upgrade":          {},
+			"pvesh create /nodes/pve/qemu/300/snapshot/before-upgrade/rollback": {},
+		},
+	}
+	client := Client{Runner: runner, Node: "pve"}
+
+	if err := client.DeleteSnapshot(context.Background(), 300, "before-upgrade"); err != nil {
+		t.Fatalf("unexpected delete error: %v", err)
+	}
+	if err := client.RollbackSnapshot(context.Background(), 300, "before-upgrade"); err != nil {
+		t.Fatalf("unexpected rollback error: %v", err)
+	}
+}
+
+func TestDeleteAndRestoreBackupVolume(t *testing.T) {
+	runner := &command.MockRunner{
+		Responses: map[string]command.Result{
+			"pvesh delete /nodes/pve/storage/backup-nas/content/backup-nas:backup/vzdump-qemu-300.vma.zst": {},
+			"qmrestore backup-nas:backup/vzdump-qemu-300.vma.zst 300 --force":                              {},
+		},
+	}
+	client := Client{Runner: runner, Node: "pve"}
+	volume := BackupVolume{VolID: "backup-nas:backup/vzdump-qemu-300.vma.zst", VMID: 300, Format: "vma.zst"}
+
+	if err := client.DeleteBackupVolume(context.Background(), volume.VolID); err != nil {
+		t.Fatalf("unexpected delete error: %v", err)
+	}
+	if err := client.RestoreBackupVolume(context.Background(), volume); err != nil {
+		t.Fatalf("unexpected restore error: %v", err)
+	}
+}
 func TestDistUpgradeReturnsOutput(t *testing.T) {
 	runner := &command.MockRunner{
 		Responses: map[string]command.Result{

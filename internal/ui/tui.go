@@ -82,6 +82,12 @@ type distUpgradeMsg struct {
 	output string
 	err    error
 }
+type destructiveActionMsg struct {
+	action string
+	vmid   int
+	name   string
+	err    error
+}
 
 type inputMode string
 type modalMode string
@@ -97,6 +103,7 @@ const (
 	modalHelp       modalMode = "help"
 	modalStartup    modalMode = "startup"
 	modalUpgrade    modalMode = "upgrade"
+	modalConfirm    modalMode = "confirm"
 	viewGuests      string    = "guests"
 	viewUsers       string    = "users"
 	viewUpdates     string    = "updates"
@@ -104,46 +111,50 @@ const (
 )
 
 type Model struct {
-	client          proxmox.Client
-	width           int
-	height          int
-	selected        int
-	selectedUser    int
-	selectedBackup  int
-	loading         bool
-	inputMode       inputMode
-	input           string
-	modalMode       modalMode
-	modalField      int
-	modalInput      string
-	modalVMIDs      string
-	modalStorage    int
-	modalGuest      int
-	modalTargetVMID int
-	modalJobID      string
-	viewMode        string
-	query           string
-	filter          string
-	guestTypeFilter string
-	sortBy          string
-	showSnaps       bool
-	showConfig      bool
-	backupMode      string
-	snapshotVMState bool
-	snapshotVMID    int
-	configVMID      int
-	snapshots       []proxmox.Snapshot
-	snapErr         error
-	config          proxmox.GuestConfig
-	configErr       error
-	tfaUserID       string
-	tfaEntries      []proxmox.TFAEntry
-	tfaErr          error
-	upgradeRunning  bool
-	upgradeOutput   string
-	upgradeErr      error
-	message         string
-	data            snapshot
+	client           proxmox.Client
+	width            int
+	height           int
+	selected         int
+	selectedUser     int
+	selectedBackup   int
+	selectedSnapshot int
+	loading          bool
+	inputMode        inputMode
+	input            string
+	modalMode        modalMode
+	modalField       int
+	modalInput       string
+	modalVMIDs       string
+	modalStorage     int
+	modalGuest       int
+	modalTargetVMID  int
+	modalJobID       string
+	modalAction      string
+	modalTitle       string
+	modalBody        string
+	viewMode         string
+	query            string
+	filter           string
+	guestTypeFilter  string
+	sortBy           string
+	showSnaps        bool
+	showConfig       bool
+	backupMode       string
+	snapshotVMState  bool
+	snapshotVMID     int
+	configVMID       int
+	snapshots        []proxmox.Snapshot
+	snapErr          error
+	config           proxmox.GuestConfig
+	configErr        error
+	tfaUserID        string
+	tfaEntries       []proxmox.TFAEntry
+	tfaErr           error
+	upgradeRunning   bool
+	upgradeOutput    string
+	upgradeErr       error
+	message          string
+	data             snapshot
 }
 
 func New(client proxmox.Client) Model {
@@ -195,6 +206,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if !m.upgradeRunning {
 						m.closeModal()
 					}
+				}
+				return m, nil
+			}
+			if m.modalMode == modalConfirm {
+				switch msg.String() {
+				case "esc":
+					m.closeModal()
+				case "enter":
+					return m.handleConfirmSubmit()
 				}
 				return m, nil
 			}
@@ -406,6 +426,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.showSnaps = true
 				m.snapshotVMID = guest.VMID
 				m.snapshots = nil
+				m.selectedSnapshot = 0
 				m.snapErr = nil
 				m.message = fmt.Sprintf("loading snapshots for %d", guest.VMID)
 				return m, m.loadSnapshots(guest.VMID)
@@ -441,6 +462,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.modalInput = job.Schedule
 				m.modalVMIDs = job.VMID
 			}
+		case "d":
+			if m.viewMode == viewBackups && m.backupMode != "jobs" {
+				if volume, ok := m.selectedBackupVolume(); ok {
+					m.openConfirm("delete-backup", "DELETE BACKUP", volume.VolID, 0, "Delete backup "+volume.VolID+" ?")
+				}
+			} else if m.viewMode == viewGuests && m.showSnaps {
+				if snap, ok := m.selectedSnapshotModel(); ok && snap.Name != "current" {
+					m.openConfirm("delete-snapshot", "DELETE SNAPSHOT", snap.Name, m.snapshotVMID, fmt.Sprintf("Delete snapshot %s for %d ?", snap.Name, m.snapshotVMID))
+				}
+			}
+		case "o":
+			if m.viewMode == viewBackups && m.backupMode != "jobs" {
+				if volume, ok := m.selectedBackupVolume(); ok {
+					m.openConfirm("restore-backup", "RESTORE BACKUP", volume.VolID, volume.VMID, fmt.Sprintf("Restore %s to VMID %d ?", volume.VolID, volume.VMID))
+				}
+			} else if m.viewMode == viewGuests && m.showSnaps {
+				if snap, ok := m.selectedSnapshotModel(); ok && snap.Name != "current" {
+					m.openConfirm("restore-snapshot", "RESTORE SNAPSHOT", snap.Name, m.snapshotVMID, fmt.Sprintf("Rollback guest %d to snapshot %s ?", m.snapshotVMID, snap.Name))
+				}
+			}
 		case "x":
 			if m.viewMode == viewUsers {
 				user, ok := m.selectedUserModel()
@@ -471,6 +512,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case snapshotsMsg:
 		if msg.vmid == m.snapshotVMID {
 			m.snapshots = msg.snapshots
+			m.selectedSnapshot = clampIndex(m.selectedSnapshot, len(msg.snapshots))
 			m.snapErr = msg.err
 			if msg.err != nil {
 				m.message = msg.err.Error()
@@ -549,6 +591,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.data.backupVolumes = msg.volumes
 		m.data.backupErr = msg.err
 		m.clampSelections()
+	case destructiveActionMsg:
+		if msg.err != nil {
+			m.message = msg.err.Error()
+		} else {
+			m.message = fmt.Sprintf("%s completed", msg.action)
+			if strings.Contains(msg.action, "backup") {
+				return m, m.loadBackups
+			}
+			if msg.vmid > 0 {
+				return m, m.loadSnapshots(msg.vmid)
+			}
+		}
 	case distUpgradeMsg:
 		m.upgradeRunning = false
 		m.upgradeOutput = msg.output
@@ -717,6 +771,41 @@ func (m Model) updateBackupJob(id string, storage string, schedule string, vmids
 	}
 }
 
+func (m Model) deleteBackupVolume(volid string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		err := m.client.DeleteBackupVolume(ctx, volid)
+		return destructiveActionMsg{action: "delete-backup", name: volid, err: err}
+	}
+}
+
+func (m Model) restoreBackupVolume(volume proxmox.BackupVolume) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+		defer cancel()
+		err := m.client.RestoreBackupVolume(ctx, volume)
+		return destructiveActionMsg{action: "restore-backup", vmid: volume.VMID, name: volume.VolID, err: err}
+	}
+}
+
+func (m Model) deleteSnapshot(vmid int, name string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		err := m.client.DeleteSnapshot(ctx, vmid, name)
+		return destructiveActionMsg{action: "delete-snapshot", vmid: vmid, name: name, err: err}
+	}
+}
+
+func (m Model) rollbackSnapshot(vmid int, name string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+		defer cancel()
+		err := m.client.RollbackSnapshot(ctx, vmid, name)
+		return destructiveActionMsg{action: "restore-snapshot", vmid: vmid, name: name, err: err}
+	}
+}
 func (m Model) loadUserTFA(userid string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
@@ -735,6 +824,16 @@ func (m Model) disableUserTFA(userid string) tea.Cmd {
 	}
 }
 
+func (m *Model) openConfirm(action string, title string, target string, vmid int, body string) {
+	m.modalMode = modalConfirm
+	m.modalAction = action
+	m.modalTitle = title
+	m.modalBody = body
+	m.modalInput = target
+	m.modalTargetVMID = vmid
+	m.inputMode = inputNone
+	m.input = ""
+}
 func (m *Model) openModal(mode modalMode, vmid int, jobID string, value string) {
 	m.modalMode = mode
 	m.modalField = 0
@@ -757,8 +856,34 @@ func (m *Model) closeModal() {
 	m.modalGuest = 0
 	m.modalTargetVMID = 0
 	m.modalJobID = ""
+	m.modalAction = ""
+	m.modalTitle = ""
+	m.modalBody = ""
 }
 
+func (m Model) handleConfirmSubmit() (tea.Model, tea.Cmd) {
+	action := m.modalAction
+	vmid := m.modalTargetVMID
+	name := m.modalInput
+	m.closeModal()
+	m.message = "running " + action
+	switch action {
+	case "delete-backup":
+		return m, m.deleteBackupVolume(name)
+	case "restore-backup":
+		volume, ok := m.selectedBackupVolumeByVolID(name)
+		if !ok {
+			m.message = "backup selection not found"
+			return m, nil
+		}
+		return m, m.restoreBackupVolume(volume)
+	case "delete-snapshot":
+		return m, m.deleteSnapshot(vmid, name)
+	case "restore-snapshot":
+		return m, m.rollbackSnapshot(vmid, name)
+	}
+	return m, nil
+}
 func (m Model) handleModalSubmit() (tea.Model, tea.Cmd) {
 	lastField := m.modalFieldCount() - 1
 	confirmField := lastField - 1
@@ -1150,10 +1275,17 @@ func (m Model) detailPanel(width int, height int) string {
 			b.WriteString(mutedStyle.Render("none loaded"))
 			b.WriteString("\n")
 		} else {
-			for _, snapshot := range m.snapshots {
-				b.WriteString(truncate(snapshot.Name, max(8, width-8)))
+			for i, snapshot := range m.snapshots {
+				line := truncate(snapshot.Name, max(8, width-8))
+				if i == m.selectedSnapshot {
+					b.WriteString(selectedRowStyle.Width(width - 4).Render(line))
+				} else {
+					b.WriteString(line)
+				}
 				b.WriteString("\n")
 			}
+			b.WriteString(mutedStyle.Render("d delete  o restore"))
+			b.WriteString("\n")
 		}
 	}
 
@@ -1241,6 +1373,10 @@ func (m Model) backupsDetailPanel(width int, height int) string {
 	b.WriteString(kv("Toggle", "tab"))
 	b.WriteString(kv("Manual", "m"))
 	b.WriteString(kv("Schedule", "e"))
+	if m.backupMode != "jobs" {
+		b.WriteString(kv("Delete", "d"))
+		b.WriteString(kv("Restore", "o"))
+	}
 	b.WriteString("\n")
 	if m.backupMode == "jobs" {
 		job, ok := m.selectedBackupJob()
@@ -1351,6 +1487,9 @@ func (m Model) modal(width int) string {
 	}
 	if m.modalMode == modalUpgrade {
 		return m.upgradeModal(width)
+	}
+	if m.modalMode == modalConfirm {
+		return m.confirmModal(width)
 	}
 
 	title := "SNAPSHOT"
@@ -1506,6 +1645,21 @@ func (m Model) modalGuestChecklist(width int, rows int) string {
 		}
 	}
 	return b.String()
+}
+func (m Model) confirmModal(width int) string {
+	lines := []string{
+		warnStyle.Render(m.modalTitle),
+		"",
+		m.modalBody,
+		"",
+		warnStyle.Render("enter confirm  esc cancel"),
+	}
+	return lipgloss.NewStyle().
+		Width(min(72, max(44, width-8))).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("196")).
+		Padding(1, 2).
+		Render(strings.Join(lines, "\n"))
 }
 func (m Model) upgradeModal(width int) string {
 	lines := []string{panelTitleStyle.Render("APT DIST-UPGRADE"), ""}
@@ -1844,6 +1998,13 @@ func (m *Model) toggleView() {
 }
 
 func (m *Model) moveSelection(delta int) {
+	if m.viewMode == viewGuests && m.showSnaps {
+		next := m.selectedSnapshot + delta
+		if next >= 0 && next < len(m.snapshots) {
+			m.selectedSnapshot = next
+		}
+		return
+	}
 	if m.viewMode == viewUsers {
 		next := m.selectedUser + delta
 		if next >= 0 && next < len(m.filteredUsers()) {
@@ -1925,6 +2086,21 @@ func (m Model) selectedBackupJob() (proxmox.BackupJob, bool) {
 	return jobs[m.selectedBackup], true
 }
 
+func (m Model) selectedSnapshotModel() (proxmox.Snapshot, bool) {
+	if len(m.snapshots) == 0 || m.selectedSnapshot >= len(m.snapshots) {
+		return proxmox.Snapshot{}, false
+	}
+	return m.snapshots[m.selectedSnapshot], true
+}
+
+func (m Model) selectedBackupVolumeByVolID(volid string) (proxmox.BackupVolume, bool) {
+	for _, volume := range m.filteredBackupVolumes() {
+		if volume.VolID == volid {
+			return volume, true
+		}
+	}
+	return proxmox.BackupVolume{}, false
+}
 func (m Model) selectedBackupVolume() (proxmox.BackupVolume, bool) {
 	volumes := m.filteredBackupVolumes()
 	if len(volumes) == 0 || m.selectedBackup >= len(volumes) {
@@ -2059,6 +2235,9 @@ func (m Model) footerText() string {
 	if m.modalMode == modalSchedule {
 		return "schedule modal  enter save  esc cancel"
 	}
+	if m.modalMode == modalConfirm {
+		return "confirmation  enter confirm  esc cancel"
+	}
 	if m.modalMode == modalUpgrade {
 		if m.upgradeRunning {
 			return "apt dist-upgrade running"
@@ -2078,7 +2257,13 @@ func (m Model) footerText() string {
 		return "g guests  u users  b backups  a dist-upgrade  r refresh  ? help  q quit"
 	}
 	if m.viewMode == viewBackups {
+		if m.viewMode == viewBackups && m.backupMode != "jobs" {
+			return "g guests  tab jobs/volumes  d delete  o restore  m manual-backup  u users  p updates  r refresh  ? help  q quit"
+		}
 		return "g guests  tab jobs/volumes  m manual-backup  e edit-schedule  u users  p updates  r refresh  ? help  q quit"
+	}
+	if m.showSnaps {
+		return "snapshots  up/down select  d delete  o restore  esc close  n snapshot  r refresh  ? help  q quit"
 	}
 	return "tab vm/ct/all  enter config  u users  p updates  b backups  m backup  r refresh  / search  f status  t sort  s snapshots  n snapshot  ? help  q quit"
 }

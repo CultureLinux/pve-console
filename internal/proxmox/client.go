@@ -159,6 +159,33 @@ func (c Client) CreateSnapshot(ctx context.Context, vmid int, name string, descr
 	return fmt.Errorf("guest %d was not found as QEMU VM or LXC container", vmid)
 }
 
+func (c Client) DeleteSnapshot(ctx context.Context, vmid int, name string) error {
+	node, err := c.nodeName()
+	if err != nil {
+		return err
+	}
+	if err := c.deleteSnapshotByType(ctx, node, vmid, GuestTypeQEMU, name); err == nil {
+		return nil
+	}
+	if err := c.deleteSnapshotByType(ctx, node, vmid, GuestTypeLXC, name); err == nil {
+		return nil
+	}
+	return fmt.Errorf("snapshot %s for guest %d was not found", name, vmid)
+}
+
+func (c Client) RollbackSnapshot(ctx context.Context, vmid int, name string) error {
+	node, err := c.nodeName()
+	if err != nil {
+		return err
+	}
+	if err := c.rollbackSnapshotByType(ctx, node, vmid, GuestTypeQEMU, name); err == nil {
+		return nil
+	}
+	if err := c.rollbackSnapshotByType(ctx, node, vmid, GuestTypeLXC, name); err == nil {
+		return nil
+	}
+	return fmt.Errorf("snapshot %s for guest %d was not found", name, vmid)
+}
 func (c Client) Users(ctx context.Context) ([]User, error) {
 	var users []User
 	if err := c.pveshJSON(ctx, &users, "get", "/access/users", "--output-format", "json"); err != nil {
@@ -249,6 +276,49 @@ func (c Client) BackupVolumes(ctx context.Context, storages []Storage) ([]Backup
 	return volumes, nil
 }
 
+func (c Client) DeleteBackupVolume(ctx context.Context, volid string) error {
+	node, err := c.nodeName()
+	if err != nil {
+		return err
+	}
+	storage := storageFromVolID(volid)
+	if storage == "" {
+		return fmt.Errorf("invalid backup volume id %q", volid)
+	}
+	path := fmt.Sprintf("/nodes/%s/storage/%s/content/%s", node, storage, volid)
+	if _, err := c.Runner.Run(ctx, "pvesh", "delete", path); err != nil {
+		return fmt.Errorf("unable to delete backup %s: %w", volid, err)
+	}
+	return nil
+}
+
+func (c Client) RestoreBackupVolume(ctx context.Context, volume BackupVolume) error {
+	if volume.VMID <= 0 {
+		return fmt.Errorf("backup %s has no VMID", volume.VolID)
+	}
+	command := "qmrestore"
+	if strings.Contains(volume.VolID, "vzdump-lxc-") || strings.Contains(volume.Format, "tar") {
+		command = "pct"
+		_, err := c.Runner.Run(ctx, command, "restore", fmt.Sprintf("%d", volume.VMID), volume.VolID, "--force", "1")
+		if err != nil {
+			return fmt.Errorf("unable to restore backup %s: %w", volume.VolID, err)
+		}
+		return nil
+	}
+	_, err := c.Runner.Run(ctx, command, volume.VolID, fmt.Sprintf("%d", volume.VMID), "--force")
+	if err != nil {
+		return fmt.Errorf("unable to restore backup %s: %w", volume.VolID, err)
+	}
+	return nil
+}
+
+func storageFromVolID(volid string) string {
+	storage, _, ok := strings.Cut(volid, ":")
+	if !ok {
+		return ""
+	}
+	return storage
+}
 func (c Client) RunBackup(ctx context.Context, vmid int, storage string) error {
 	node, err := c.nodeName()
 	if err != nil {
@@ -336,6 +406,18 @@ func (c Client) createSnapshotByType(ctx context.Context, node string, vmid int,
 	}
 
 	_, err := c.Runner.Run(ctx, "pvesh", args...)
+	return err
+}
+
+func (c Client) deleteSnapshotByType(ctx context.Context, node string, vmid int, typ GuestType, name string) error {
+	path := fmt.Sprintf("/nodes/%s/%s/%d/snapshot/%s", node, pathForGuestType(typ), vmid, name)
+	_, err := c.Runner.Run(ctx, "pvesh", "delete", path)
+	return err
+}
+
+func (c Client) rollbackSnapshotByType(ctx context.Context, node string, vmid int, typ GuestType, name string) error {
+	path := fmt.Sprintf("/nodes/%s/%s/%d/snapshot/%s/rollback", node, pathForGuestType(typ), vmid, name)
+	_, err := c.Runner.Run(ctx, "pvesh", "create", path)
 	return err
 }
 
