@@ -274,11 +274,19 @@ func TestPanelsShowAsciiLoaderWhileLoading(t *testing.T) {
 	model.viewMode = viewUpdates
 
 	view := model.updatesPanel(80, 20)
-	if !strings.Contains(view, "checking apt") || !strings.Contains(view, "[==>") {
+	if !strings.Contains(view, "checking apt") || !strings.Contains(view, "tamapve") {
 		t.Fatalf("expected ascii loader, got %q", view)
 	}
 }
 
+func TestLoadingPetFramesAreDiscreetAscii(t *testing.T) {
+	view := loadingPet("checking apt", 3)
+	for _, want := range []string{"+---+", "(^_^)", "checking apt", "tamapve"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected %q in loading pet, got %q", want, view)
+		}
+	}
+}
 func TestUpgradeModalShowsOutput(t *testing.T) {
 	model := NewWithStartup(proxmox.Client{}, false)
 	model.modalMode = modalUpgrade

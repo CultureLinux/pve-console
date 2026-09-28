@@ -1081,12 +1081,27 @@ func (m Model) backupsPanel(width int, height int) string {
 }
 
 func loadingBlock(label string) string {
-	lines := []string{
-		"[=     ] booting scanner",
-		"[==>   ] " + label,
-		"[:::::] waiting for proxmox",
+	frame := int(time.Now().UnixMilli()/350) % len(loaderPetFrames)
+	return mutedStyle.Render(loadingPet(label, frame))
+}
+
+var loaderPetFrames = []string{
+	"(o_o)", "(O_o)", "(o_O)", "(^_^)",
+}
+
+func loadingPet(label string, frame int) string {
+	if frame < 0 {
+		frame = 0
 	}
-	return mutedStyle.Render(strings.Join(lines, "\n"))
+	face := loaderPetFrames[frame%len(loaderPetFrames)]
+	steps := []string{".", "..", "...", " .."}
+	step := steps[frame%len(steps)]
+	lines := []string{
+		" +---+",
+		fmt.Sprintf("| %s |  %s", face, label),
+		" +---+   tamapve" + step,
+	}
+	return strings.Join(lines, "\n")
 }
 func (m Model) detailPanel(width int, height int) string {
 	if m.viewMode == viewUsers {
