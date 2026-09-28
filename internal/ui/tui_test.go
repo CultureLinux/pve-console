@@ -253,3 +253,41 @@ func TestViewCentersModalOverlay(t *testing.T) {
 		t.Fatalf("expected modal overlay before footer, got %q", view)
 	}
 }
+func TestEnterOutsideGuestsDoesNotOpenConfig(t *testing.T) {
+	model := NewWithStartup(proxmox.Client{}, false)
+	model.viewMode = viewUpdates
+	model.data.guests = []proxmox.Guest{{VMID: 300, Name: "wp-preprod"}}
+
+	updated, cmd := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil {
+		t.Fatalf("expected no command")
+	}
+	next := updated.(Model)
+	if next.showConfig {
+		t.Fatalf("expected config modal to stay closed")
+	}
+}
+
+func TestPanelsShowAsciiLoaderWhileLoading(t *testing.T) {
+	model := NewWithStartup(proxmox.Client{}, false)
+	model.loading = true
+	model.viewMode = viewUpdates
+
+	view := model.updatesPanel(80, 20)
+	if !strings.Contains(view, "checking apt") || !strings.Contains(view, "[==>") {
+		t.Fatalf("expected ascii loader, got %q", view)
+	}
+}
+
+func TestUpgradeModalShowsOutput(t *testing.T) {
+	model := NewWithStartup(proxmox.Client{}, false)
+	model.modalMode = modalUpgrade
+	model.upgradeOutput = "Preparing packages\nDone"
+
+	view := model.modal(100)
+	for _, want := range []string{"APT DIST-UPGRADE", "Preparing packages", "Done", "enter/esc close"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected %q in upgrade modal, got %q", want, view)
+		}
+	}
+}

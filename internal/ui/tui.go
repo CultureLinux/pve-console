@@ -78,6 +78,10 @@ type backupsMsg struct {
 	volumes []proxmox.BackupVolume
 	err     error
 }
+type distUpgradeMsg struct {
+	output string
+	err    error
+}
 
 type inputMode string
 type modalMode string
@@ -92,6 +96,7 @@ const (
 	modalSchedule   modalMode = "schedule"
 	modalHelp       modalMode = "help"
 	modalStartup    modalMode = "startup"
+	modalUpgrade    modalMode = "upgrade"
 	viewGuests      string    = "guests"
 	viewUsers       string    = "users"
 	viewUpdates     string    = "updates"
@@ -134,6 +139,9 @@ type Model struct {
 	tfaUserID       string
 	tfaEntries      []proxmox.TFAEntry
 	tfaErr          error
+	upgradeRunning  bool
+	upgradeOutput   string
+	upgradeErr      error
 	message         string
 	data            snapshot
 }
@@ -178,6 +186,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				switch msg.String() {
 				case "esc", "enter", "?", "h":
 					m.closeModal()
+				}
+				return m, nil
+			}
+			if m.modalMode == modalUpgrade {
+				switch msg.String() {
+				case "esc", "enter":
+					if !m.upgradeRunning {
+						m.closeModal()
+					}
 				}
 				return m, nil
 			}
@@ -286,7 +303,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, tea.Quit
 		case "enter":
-			if m.viewMode == viewUsers {
+			if m.viewMode != viewGuests {
 				return m, nil
 			}
 			guest, ok := m.selectedGuest()
@@ -351,6 +368,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.moveSelection(-1)
 		case "down", "j":
 			m.moveSelection(1)
+		case "a":
+			if m.viewMode == viewUpdates && len(m.data.updates) > 0 && !m.upgradeRunning {
+				m.modalMode = modalUpgrade
+				m.upgradeRunning = true
+				m.upgradeOutput = ""
+				m.upgradeErr = nil
+				m.message = "running apt dist-upgrade"
+				return m, m.runDistUpgrade
+			}
 		case "r":
 			m.loading = true
 			if m.viewMode == viewUsers {
@@ -523,6 +549,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.data.backupVolumes = msg.volumes
 		m.data.backupErr = msg.err
 		m.clampSelections()
+	case distUpgradeMsg:
+		m.upgradeRunning = false
+		m.upgradeOutput = msg.output
+		m.upgradeErr = msg.err
+		if msg.err != nil {
+			m.message = msg.err.Error()
+		} else {
+			m.message = "apt dist-upgrade completed"
+			return m, m.loadUpdates
+		}
 	}
 
 	return m, nil
@@ -628,6 +664,12 @@ func (m Model) loadUpdates() tea.Msg {
 	return updatesMsg{updates: updates, err: err}
 }
 
+func (m Model) runDistUpgrade() tea.Msg {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+	output, err := m.client.DistUpgrade(ctx)
+	return distUpgradeMsg{output: output, err: err}
+}
 func (m Model) loadBackups() tea.Msg {
 	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
 	defer cancel()
@@ -907,7 +949,7 @@ func (m Model) guestPanel(width int, height int) string {
 	if m.data.err != nil {
 		b.WriteString(errorStyle.Render(m.data.err.Error()))
 	} else if m.loading && len(m.data.guests) == 0 {
-		b.WriteString(mutedStyle.Render("loading..."))
+		b.WriteString(loadingBlock("scanning guests"))
 	} else if len(m.filteredGuests()) == 0 {
 		b.WriteString(mutedStyle.Render("no guests found"))
 	} else {
@@ -942,7 +984,9 @@ func (m Model) userPanel(width int, height int) string {
 	b.WriteString(mutedStyle.Render(fmt.Sprintf("%-28s %-7s %-5s %-20s", "USERID", "ENABLED", "TFA", "EMAIL")))
 	b.WriteString("\n")
 
-	if len(m.data.users) == 0 {
+	if m.loading && len(m.data.users) == 0 {
+		b.WriteString(loadingBlock("reading users"))
+	} else if len(m.data.users) == 0 {
 		b.WriteString(mutedStyle.Render("no users loaded"))
 	} else if len(users) == 0 {
 		b.WriteString(mutedStyle.Render("no users found"))
@@ -977,6 +1021,8 @@ func (m Model) updatesPanel(width int, height int) string {
 	b.WriteString("\n")
 	if m.data.updateErr != nil {
 		b.WriteString(errorStyle.Render(m.data.updateErr.Error()))
+	} else if m.loading && len(m.data.updates) == 0 {
+		b.WriteString(loadingBlock("checking apt"))
 	} else if len(m.data.updates) == 0 {
 		b.WriteString(okStyle.Render("system up to date"))
 	} else if len(updates) == 0 {
@@ -1010,6 +1056,8 @@ func (m Model) backupsPanel(width int, height int) string {
 	b.WriteString("\n")
 	if m.data.backupErr != nil {
 		b.WriteString(errorStyle.Render(m.data.backupErr.Error()))
+	} else if m.loading && count == 0 {
+		b.WriteString(loadingBlock("indexing backups"))
 	} else if count == 0 {
 		b.WriteString(mutedStyle.Render("no backups found"))
 	} else {
@@ -1032,6 +1080,14 @@ func (m Model) backupsPanel(width int, height int) string {
 	return panelStyle.Width(width).Height(height).Render(b.String())
 }
 
+func loadingBlock(label string) string {
+	lines := []string{
+		"[=     ] booting scanner",
+		"[==>   ] " + label,
+		"[:::::] waiting for proxmox",
+	}
+	return mutedStyle.Render(strings.Join(lines, "\n"))
+}
 func (m Model) detailPanel(width int, height int) string {
 	if m.viewMode == viewUsers {
 		return m.userDetailPanel(width, height)
@@ -1150,7 +1206,7 @@ func (m Model) updatesDetailPanel(width int, height int) string {
 	b.WriteString("\n")
 	b.WriteString(kv("Updates", fmt.Sprintf("%d", len(m.data.updates))))
 	if len(m.data.updates) > 0 {
-		b.WriteString(kv("Action", "apt update && apt upgrade"))
+		b.WriteString(kv("Action", "a dist-upgrade"))
 	}
 	if m.message != "" {
 		b.WriteString("\n")
@@ -1277,6 +1333,9 @@ func (m Model) modal(width int) string {
 	}
 	if m.modalMode == modalSchedule {
 		return m.scheduleModal(width)
+	}
+	if m.modalMode == modalUpgrade {
+		return m.upgradeModal(width)
 	}
 
 	title := "SNAPSHOT"
@@ -1432,6 +1491,35 @@ func (m Model) modalGuestChecklist(width int, rows int) string {
 		}
 	}
 	return b.String()
+}
+func (m Model) upgradeModal(width int) string {
+	lines := []string{panelTitleStyle.Render("APT DIST-UPGRADE"), ""}
+	if m.upgradeRunning {
+		lines = append(lines, loadingBlock("apt-get -y dist-upgrade"))
+	} else {
+		if m.upgradeErr != nil {
+			lines = append(lines, errorStyle.Render(m.upgradeErr.Error()), "")
+		}
+		output := strings.TrimSpace(m.upgradeOutput)
+		if output == "" {
+			output = "no output"
+		}
+		for _, line := range strings.Split(output, "\n") {
+			lines = append(lines, truncate(line, max(20, min(86, width-12))))
+			if len(lines) >= 20 {
+				lines = append(lines, mutedStyle.Render("... output truncated"))
+				break
+			}
+		}
+		lines = append(lines, "", mutedStyle.Render("enter/esc close"))
+	}
+
+	return lipgloss.NewStyle().
+		Width(min(92, max(54, width-8))).
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("214")).
+		Padding(1, 2).
+		Render(strings.Join(lines, "\n"))
 }
 func (m Model) startupModal(width int) string {
 	lines := []string{
@@ -1956,6 +2044,12 @@ func (m Model) footerText() string {
 	if m.modalMode == modalSchedule {
 		return "schedule modal  enter save  esc cancel"
 	}
+	if m.modalMode == modalUpgrade {
+		if m.upgradeRunning {
+			return "apt dist-upgrade running"
+		}
+		return "apt dist-upgrade output  enter/esc close"
+	}
 	if m.inputMode == inputDisableTFA {
 		return "confirm userid: " + m.input + "  enter disable TFA  esc cancel"
 	}
@@ -1966,7 +2060,7 @@ func (m Model) footerText() string {
 		return "g guests  p updates  b backups  s load-tfa  x disable-tfa  r refresh  ? help  q quit"
 	}
 	if m.viewMode == viewUpdates {
-		return "g guests  u users  b backups  r refresh  ? help  q quit"
+		return "g guests  u users  b backups  a dist-upgrade  r refresh  ? help  q quit"
 	}
 	if m.viewMode == viewBackups {
 		return "g guests  tab jobs/volumes  m manual-backup  e edit-schedule  u users  p updates  r refresh  ? help  q quit"

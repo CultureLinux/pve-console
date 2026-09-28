@@ -46,7 +46,11 @@ func (r ExecRunner) Run(ctx context.Context, command string, args ...string) (Re
 		timeout = DefaultTimeout
 	}
 
-	runCtx, cancel := context.WithTimeout(ctx, timeout)
+	runCtx := ctx
+	cancel := func() {}
+	if _, ok := ctx.Deadline(); !ok {
+		runCtx, cancel = context.WithTimeout(ctx, timeout)
+	}
 	defer cancel()
 
 	start := time.Now()

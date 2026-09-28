@@ -2,6 +2,7 @@ package proxmox
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"pvc/internal/command"
@@ -136,6 +137,22 @@ func TestParseAptUpdates(t *testing.T) {
 	}
 }
 
+func TestDistUpgradeReturnsOutput(t *testing.T) {
+	runner := &command.MockRunner{
+		Responses: map[string]command.Result{
+			"apt-get -y dist-upgrade": {Stdout: []byte("upgraded libssl\n"), Stderr: []byte("notice\n")},
+		},
+	}
+	client := Client{Runner: runner, Node: "pve"}
+
+	output, err := client.DistUpgrade(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(output, "upgraded libssl") || !strings.Contains(output, "notice") {
+		t.Fatalf("unexpected output: %q", output)
+	}
+}
 func TestBackupVolumes(t *testing.T) {
 	runner := &command.MockRunner{
 		Responses: map[string]command.Result{

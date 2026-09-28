@@ -199,6 +199,21 @@ func (c Client) PackageUpdates(ctx context.Context) ([]PackageUpdate, error) {
 	return parseAptUpdates(result.Stdout), nil
 }
 
+func (c Client) DistUpgrade(ctx context.Context) (string, error) {
+	result, err := c.Runner.Run(ctx, "apt-get", "-y", "dist-upgrade")
+	output := strings.TrimSpace(string(result.Stdout))
+	stderr := strings.TrimSpace(string(result.Stderr))
+	if stderr != "" {
+		if output != "" {
+			output += "\n"
+		}
+		output += stderr
+	}
+	if err != nil {
+		return output, fmt.Errorf("unable to run apt dist-upgrade: %w", err)
+	}
+	return output, nil
+}
 func (c Client) BackupJobs(ctx context.Context) ([]BackupJob, error) {
 	var jobs []BackupJob
 	if err := c.pveshJSON(ctx, &jobs, "get", "/cluster/backup", "--output-format", "json"); err != nil {
