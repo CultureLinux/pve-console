@@ -50,7 +50,7 @@ publish:github:
     - ams3
   stage: publish
   rules:
-    - if: '$CI_COMMIT_BRANCH == "main"'
+    - if: '$CI_COMMIT_BRANCH == "main" || $CI_COMMIT_BRANCH == "master"'
       when: manual
     - when: never
   before_script:
