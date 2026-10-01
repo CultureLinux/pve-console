@@ -13,7 +13,8 @@ default:
 
 variables:
   GOFLAGS: "-mod=readonly"
-
+  GIT_DEPTH: "0"
+  
 test:
   stage: test
   script:
