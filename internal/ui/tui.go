@@ -1078,7 +1078,7 @@ func tick() tea.Cmd {
 }
 
 func (m Model) header(width int) string {
-	title := "pve-console"
+	title := titleStyle.Render("pve-console")
 	node := m.data.node.Name
 	if node == "" {
 		node = "loading"
@@ -1087,24 +1087,26 @@ func (m Model) header(width int) string {
 	if meta == "" {
 		meta = "Proxmox"
 	}
-	meta += fmt.Sprintf(" | view:%s type:%s filter:%s sort:%s updates:%d", m.viewMode, m.guestTypeFilter, m.filter, m.sortBy, len(m.data.updates))
+	meta += fmt.Sprintf("  node:%s  view:%s  type:%s  filter:%s  sort:%s  updates:%d", node, m.viewMode, m.guestTypeFilter, m.filter, m.sortBy, len(m.data.updates))
 	if m.query != "" {
-		meta += " | search:" + m.query
+		meta += "  search:" + m.query
 	}
 	if m.inputMode != inputNone {
-		meta += fmt.Sprintf(" | %s:%s", m.inputMode, m.input)
+		meta += fmt.Sprintf("  %s:%s", m.inputMode, m.input)
 	}
 	if m.loading {
-		meta += " | refreshing"
+		meta += "  refreshing"
 	}
-	return headerStyle.Width(width).Render(fmt.Sprintf("%s  %s  %s", title, node, meta))
+	return headerStyle.Width(width).Render(fmt.Sprintf("%s  %s", title, meta))
 }
 
 func (m Model) guestPanel(width int, height int) string {
 	var b strings.Builder
 	b.WriteString(panelTitleStyle.Render("GUESTS"))
+	b.WriteString(" ")
+	b.WriteString(mutedStyle.Render(fmt.Sprintf("(%d)", len(m.filteredGuests()))))
 	b.WriteString("\n")
-	b.WriteString(mutedStyle.Render(fmt.Sprintf("%-5s %-24s %-6s %-10s", "ID", "NAME", "TYPE", "STATUS")))
+	b.WriteString(tableHeaderStyle.Render(fmt.Sprintf("%-5s %-24s %-6s %-12s", "ID", "NAME", "TYPE", "STATUS")))
 	b.WriteString("\n")
 
 	if m.data.err != nil {
@@ -1124,7 +1126,7 @@ func (m Model) guestPanel(width int, height int) string {
 		for i := start; i < end; i++ {
 			guest := guests[i]
 			status := statusLabel(guest.Status)
-			line := fmt.Sprintf("%-5d %-24s %-6s %-10s", guest.VMID, truncate(guest.Name, 24), strings.ToUpper(string(guest.Type)), status)
+			line := fmt.Sprintf("%-5d %-24s %-6s %-12s", guest.VMID, truncate(guest.Name, 24), strings.ToUpper(string(guest.Type)), status)
 			if i == m.selected {
 				b.WriteString(selectedRowStyle.Width(width - 4).Render(line))
 			} else {
@@ -1142,7 +1144,7 @@ func (m Model) userPanel(width int, height int) string {
 	var b strings.Builder
 	b.WriteString(panelTitleStyle.Render(fmt.Sprintf("USERS (%d)", len(users))))
 	b.WriteString("\n")
-	b.WriteString(mutedStyle.Render(fmt.Sprintf("%-28s %-7s %-5s %-20s", "USERID", "ENABLED", "TFA", "EMAIL")))
+	b.WriteString(tableHeaderStyle.Render(fmt.Sprintf("%-28s %-7s %-5s %-20s", "USERID", "ENABLED", "TFA", "EMAIL")))
 	b.WriteString("\n")
 
 	if m.loading && len(m.data.users) == 0 {
@@ -1178,7 +1180,7 @@ func (m Model) updatesPanel(width int, height int) string {
 	var b strings.Builder
 	b.WriteString(panelTitleStyle.Render(fmt.Sprintf("APT UPDATES (%d)", len(updates))))
 	b.WriteString("\n")
-	b.WriteString(mutedStyle.Render(fmt.Sprintf("%-28s %-18s %-18s", "PACKAGE", "CURRENT", "CANDIDATE")))
+	b.WriteString(tableHeaderStyle.Render(fmt.Sprintf("%-28s %-18s %-18s", "PACKAGE", "CURRENT", "CANDIDATE")))
 	b.WriteString("\n")
 	if m.data.updateErr != nil {
 		b.WriteString(errorStyle.Render(m.data.updateErr.Error()))
@@ -1210,9 +1212,9 @@ func (m Model) backupsPanel(width int, height int) string {
 	}
 	b.WriteString("\n")
 	if m.backupMode == "jobs" {
-		b.WriteString(mutedStyle.Render(fmt.Sprintf("%-18s %-14s %-18s %-8s %-18s", "ID", "STORAGE", "SCHEDULE", "ENABLED", "VMIDS")))
+		b.WriteString(tableHeaderStyle.Render(fmt.Sprintf("%-18s %-14s %-18s %-8s %-18s", "ID", "STORAGE", "SCHEDULE", "ENABLED", "VMIDS")))
 	} else {
-		b.WriteString(mutedStyle.Render(fmt.Sprintf("%-6s %-22s %-17s %-10s", "VMID", "NAME", "DATE", "SIZE")))
+		b.WriteString(tableHeaderStyle.Render(fmt.Sprintf("%-6s %-22s %-17s %-10s", "VMID", "NAME", "DATE", "SIZE")))
 	}
 	b.WriteString("\n")
 	if m.data.backupErr != nil {
@@ -2395,36 +2397,55 @@ func max(a int, b int) int {
 }
 
 var (
+	cyan       = lipgloss.Color("#22D3EE")
+	green      = lipgloss.Color("#22C55E")
+	amber      = lipgloss.Color("#F59E0B")
+	red        = lipgloss.Color("#F43F5E")
+	ink        = lipgloss.Color("#111827")
+	panelInk   = lipgloss.Color("#0B1220")
+	text       = lipgloss.Color("#E5E7EB")
+	muted      = lipgloss.Color("#94A3B8")
+	titleStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(ink).
+			Background(cyan).
+			Padding(0, 1)
 	headerStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("230")).
-			Background(lipgloss.Color("62")).
+			Foreground(text).
+			Background(panelInk).
 			Padding(0, 1)
 	panelStyle = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("62")).
+			BorderForeground(cyan).
+			Background(panelInk).
 			Padding(1, 2)
 	panelTitleStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("81"))
+			Foreground(cyan)
+	tableHeaderStyle = lipgloss.NewStyle().
+				Bold(true).
+				Foreground(muted)
 	rowStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("252"))
+			Foreground(text).
+			Background(panelInk)
 	selectedRowStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("230")).
-				Background(lipgloss.Color("62")).
+				Foreground(ink).
+				Background(cyan).
 				Bold(true)
 	mutedStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("244"))
+			Foreground(muted)
 	okStyle = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("42")).
+		Foreground(green).
 		Bold(true)
 	warnStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("214")).
+			Foreground(amber).
 			Bold(true)
 	errorStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("203")).
+			Foreground(red).
 			Bold(true)
 	footerStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("244")).
+			Foreground(muted).
+			Background(ink).
 			Padding(0, 1)
 )
