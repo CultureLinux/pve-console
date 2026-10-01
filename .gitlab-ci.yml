@@ -46,6 +46,8 @@ deploy:proxmox:
   #when: manual
 
 publish:github:
+  tags:
+    - ams3
   stage: publish
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
