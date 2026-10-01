@@ -125,6 +125,13 @@ func (c Client) Storages(ctx context.Context) ([]Storage, error) {
 	return storages, nil
 }
 
+func (c Client) StartGuest(ctx context.Context, vmid int) error {
+	return c.guestPowerAction(ctx, vmid, "start")
+}
+
+func (c Client) StopGuest(ctx context.Context, vmid int) error {
+	return c.guestPowerAction(ctx, vmid, "stop")
+}
 func (c Client) Snapshots(ctx context.Context, vmid int) ([]Snapshot, error) {
 	node, err := c.nodeName()
 	if err != nil {
@@ -364,6 +371,25 @@ func (c Client) guestsByType(ctx context.Context, node string, typ GuestType) ([
 	return guests, nil
 }
 
+func (c Client) guestPowerAction(ctx context.Context, vmid int, action string) error {
+	node, err := c.nodeName()
+	if err != nil {
+		return err
+	}
+	if err := c.guestPowerActionByType(ctx, node, vmid, GuestTypeQEMU, action); err == nil {
+		return nil
+	}
+	if err := c.guestPowerActionByType(ctx, node, vmid, GuestTypeLXC, action); err == nil {
+		return nil
+	}
+	return fmt.Errorf("guest %d was not found as QEMU VM or LXC container", vmid)
+}
+
+func (c Client) guestPowerActionByType(ctx context.Context, node string, vmid int, typ GuestType, action string) error {
+	path := fmt.Sprintf("/nodes/%s/%s/%d/status/%s", node, pathForGuestType(typ), vmid, action)
+	_, err := c.Runner.Run(ctx, "pvesh", "create", path)
+	return err
+}
 func (c Client) guestStatusByType(ctx context.Context, node string, vmid int, typ GuestType) (Guest, error) {
 	var guest Guest
 	path := fmt.Sprintf("/nodes/%s/%s/%d/status/current", node, pathForGuestType(typ), vmid)

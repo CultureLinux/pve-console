@@ -89,6 +89,22 @@ func TestStoragesComputesUsage(t *testing.T) {
 	}
 }
 
+func TestStartStopGuestUsesPveshStatusActions(t *testing.T) {
+	runner := &command.MockRunner{
+		Responses: map[string]command.Result{
+			"pvesh create /nodes/pve/qemu/300/status/start": {},
+			"pvesh create /nodes/pve/qemu/300/status/stop":  {},
+		},
+	}
+	client := Client{Runner: runner, Node: "pve"}
+
+	if err := client.StartGuest(context.Background(), 300); err != nil {
+		t.Fatalf("unexpected start error: %v", err)
+	}
+	if err := client.StopGuest(context.Background(), 300); err != nil {
+		t.Fatalf("unexpected stop error: %v", err)
+	}
+}
 func TestSnapshotsFallsBackToLXC(t *testing.T) {
 	runner := &command.MockRunner{
 		Responses: map[string]command.Result{

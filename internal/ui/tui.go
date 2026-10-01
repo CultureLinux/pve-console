@@ -388,6 +388,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.moveSelection(-1)
 		case "down", "j":
 			m.moveSelection(1)
+		case "+":
+			if m.viewMode == viewGuests {
+				if guest, ok := m.selectedGuest(); ok {
+					m.openConfirm("start-guest", "START GUEST", fmt.Sprintf("%d", guest.VMID), guest.VMID, fmt.Sprintf("Start %s %d (%s) ?", strings.ToUpper(string(guest.Type)), guest.VMID, guest.Name))
+				}
+			}
+		case "-":
+			if m.viewMode == viewGuests {
+				if guest, ok := m.selectedGuest(); ok {
+					m.openConfirm("stop-guest", "STOP GUEST", fmt.Sprintf("%d", guest.VMID), guest.VMID, fmt.Sprintf("Stop %s %d (%s) ?", strings.ToUpper(string(guest.Type)), guest.VMID, guest.Name))
+				}
+			}
 		case "a":
 			if m.viewMode == viewUpdates && len(m.data.updates) > 0 && !m.upgradeRunning {
 				m.modalMode = modalUpgrade
@@ -599,6 +611,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if strings.Contains(msg.action, "backup") {
 				return m, m.loadBackups
 			}
+			if strings.Contains(msg.action, "guest") {
+				return m, m.load
+			}
 			if msg.vmid > 0 {
 				return m, m.loadSnapshots(msg.vmid)
 			}
@@ -771,6 +786,23 @@ func (m Model) updateBackupJob(id string, storage string, schedule string, vmids
 	}
 }
 
+func (m Model) startGuest(vmid int) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		err := m.client.StartGuest(ctx, vmid)
+		return destructiveActionMsg{action: "start-guest", vmid: vmid, name: fmt.Sprintf("%d", vmid), err: err}
+	}
+}
+
+func (m Model) stopGuest(vmid int) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		err := m.client.StopGuest(ctx, vmid)
+		return destructiveActionMsg{action: "stop-guest", vmid: vmid, name: fmt.Sprintf("%d", vmid), err: err}
+	}
+}
 func (m Model) deleteBackupVolume(volid string) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -881,6 +913,10 @@ func (m Model) handleConfirmSubmit() (tea.Model, tea.Cmd) {
 		return m, m.deleteSnapshot(vmid, name)
 	case "restore-snapshot":
 		return m, m.rollbackSnapshot(vmid, name)
+	case "start-guest":
+		return m, m.startGuest(vmid)
+	case "stop-guest":
+		return m, m.stopGuest(vmid)
 	}
 	return m, nil
 }
@@ -2265,7 +2301,7 @@ func (m Model) footerText() string {
 	if m.showSnaps {
 		return "snapshots  up/down select  d delete  o restore  esc close  n snapshot  r refresh  ? help  q quit"
 	}
-	return "tab vm/ct/all  enter config  u users  p updates  b backups  m backup  r refresh  / search  f status  t sort  s snapshots  n snapshot  ? help  q quit"
+	return "tab vm/ct/all  enter config  + start  - stop  u users  p updates  b backups  m backup  r refresh  / search  f status  t sort  s snapshots  n snapshot  ? help  q quit"
 }
 
 func kv(key string, value string) string {
