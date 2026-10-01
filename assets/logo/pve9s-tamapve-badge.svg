@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">pve9s tamapve badge logo</title>
+  <desc id="desc">A compact terminal badge with a tiny ASCII-style companion face and Proxmox console cues.</desc>
+  <defs>
+    <linearGradient id="card" x1="72" y1="64" x2="440" y2="448" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#101827"/>
+      <stop offset="1" stop-color="#070b12"/>
+    </linearGradient>
+    <linearGradient id="glow" x1="150" y1="130" x2="360" y2="380" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#36d399"/>
+      <stop offset="1" stop-color="#ff8a00"/>
+    </linearGradient>
+  </defs>
+  <rect x="56" y="56" width="400" height="400" rx="96" fill="url(#card)"/>
+  <rect x="102" y="104" width="308" height="268" rx="34" fill="#0d1420" stroke="#243244" stroke-width="10"/>
+  <path d="M102 154h308" stroke="#243244" stroke-width="10"/>
+  <path d="M138 132h52" stroke="#ff8a00" stroke-width="12" stroke-linecap="round"/>
+  <path d="M150 222h212v104H150z" fill="#111c2c" stroke="url(#glow)" stroke-width="12" stroke-linejoin="round"/>
+  <circle cx="214" cy="274" r="13" fill="#e7edf5"/>
+  <circle cx="298" cy="274" r="13" fill="#e7edf5"/>
+  <path d="M238 304h36" stroke="#36d399" stroke-width="12" stroke-linecap="round"/>
+  <path d="M230 386h150" stroke="#ff8a00" stroke-width="14" stroke-linecap="round"/>
+</svg>
