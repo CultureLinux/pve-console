@@ -80,6 +80,20 @@ func checked(t *testing.T, f *fakeUpdater) Model {
 	return m
 }
 
+// afterGuard checks that the update modal is open on its own, then lets the
+// guard that follows its opening end.
+func afterGuard(t *testing.T, m Model) Model {
+	t.Helper()
+	if m.modalMode != modalUpdate || !m.upd.guard {
+		t.Fatalf("the modal should be open and guarded: mode=%q guard=%t", m.modalMode, m.upd.guard)
+	}
+	m, _ = deliver(t, m, updateGuardMsg{})
+	if m.upd.guard {
+		t.Fatal("the guard must end")
+	}
+	return m
+}
+
 func TestHeaderShowsTheVersion(t *testing.T) {
 	m := updatableModel(&fakeUpdater{})
 	top := stripANSI(m.headerTop(110))
@@ -144,6 +158,11 @@ func TestAnAvailableUpdateIsAnnouncedEverywhere(t *testing.T) {
 
 	if !m.updateAvailable() {
 		t.Fatalf("phase=%v err=%v", m.upd.phase, m.upd.err)
+	}
+	// The modal opened on its own; "later" leaves the marks of the screen.
+	m, _ = press(t, m, "esc")
+	if m.modalMode != modalNone {
+		t.Fatalf("mode = %q", m.modalMode)
 	}
 	if !strings.Contains(stripANSI(m.headerTop(110)), "⬆ v0.2.1") {
 		t.Fatalf("the header marks it: %q", stripANSI(m.headerTop(110)))
@@ -337,7 +356,7 @@ func TestInstallationRunsAfterConfirmationAndEndsInstalled(t *testing.T) {
 		result: update.Result{Path: "/usr/local/sbin/pve-console", Previous: "/usr/local/sbin/pve-console.prev", Version: "pve-console 0.2.1 (abc, today)"},
 	}
 	m := checked(t, f)
-	m, _ = press(t, m, "U")
+	m = afterGuard(t, m)
 	m, cmd := press(t, m, "enter")
 	if m.upd.phase != updateInstalling || cmd == nil || m.message != "updating pve-console to v0.2.1" {
 		t.Fatalf("phase=%v message=%q", m.upd.phase, m.message)
@@ -431,7 +450,7 @@ func TestRestartAfterAnUpdateQuitsAndAsksTheCallerToRestart(t *testing.T) {
 func TestInstallationFailureLeavesTheErrorAndLogsIt(t *testing.T) {
 	f := &fakeUpdater{info: newerVersion(), installErr: errors.New("checksum mismatch for pve-console_linux_amd64: nothing installed")}
 	m := checked(t, f)
-	m, _ = press(t, m, "U")
+	m = afterGuard(t, m)
 	m, cmd := press(t, m, "enter")
 	m = drive(t, m, cmd)
 
@@ -511,7 +530,7 @@ func TestDemoUpdateIsPlayedWithoutInstallingAnything(t *testing.T) {
 	if !m.updateAvailable() {
 		t.Fatal("the demo always has an update to offer")
 	}
-	m, _ = press(t, m, "U")
+	m = afterGuard(t, m)
 	m, cmd = press(t, m, "enter")
 	m = drive(t, m, cmd)
 	if m.upd.phase != updateInstalled {
@@ -577,5 +596,129 @@ func TestTheModalLabelsDoNotRunIntoTheValues(t *testing.T) {
 	}
 	if strings.Contains(out, "###") || strings.Contains(out, "- Corrige") {
 		t.Fatalf("the notes must not show Markdown marks:\n%s", out)
+	}
+}
+
+// The modal announces an update on its own, once, and never in the way.
+func TestAnUpdateOpensTheModalOnItsOwn(t *testing.T) {
+	f := &fakeUpdater{info: newerVersion()}
+	m := updatableModel(f)
+	m, cmd := deliver(t, m, updateStartMsg{})
+	m, cmd = execute(t, m, cmd)
+	if m.modalMode != modalUpdate || !m.upd.offered || m.upd.offer {
+		t.Fatalf("mode=%q offered=%t offer=%t", m.modalMode, m.upd.offered, m.upd.offer)
+	}
+	if cmd == nil {
+		t.Fatal("the guard needs its timer")
+	}
+	for _, want := range []string{"Update available", "v0.2.1", "later"} {
+		if out := stripANSI(m.View()); !strings.Contains(out, want) {
+			t.Fatalf("the modal lacks %q:\n%s", want, out)
+		}
+	}
+
+	// A habitual enter, right when the modal appears, installs nothing.
+	m, c := press(t, m, "enter", "enter")
+	if c != nil || m.upd.phase != updateKnown {
+		t.Fatalf("phase=%v: enter is ignored during the guard", m.upd.phase)
+	}
+	if _, installs := f.counts(); installs != 0 {
+		t.Fatalf("installs = %d", installs)
+	}
+	// esc still works during the guard, and the modal does not come back.
+	m, _ = press(t, m, "esc")
+	if m.modalMode != modalNone {
+		t.Fatalf("mode = %q", m.modalMode)
+	}
+	m, _ = deliver(t, m, updateGuardMsg{})
+	m, _ = deliver(t, m, spinMsg{})
+	m, _ = deliver(t, m, updateCheckMsg{info: newerVersion()})
+	if m.modalMode != modalNone {
+		t.Fatal("once per session")
+	}
+	// U opens it again, with no guard: the user asked.
+	m, _ = press(t, m, "U")
+	if m.modalMode != modalUpdate || m.upd.guard {
+		t.Fatalf("mode=%q guard=%t", m.modalMode, m.upd.guard)
+	}
+}
+
+func TestTheOfferedModalInstallsOnlyAfterTheGuard(t *testing.T) {
+	f := &fakeUpdater{info: newerVersion(), steps: []string{"installing"}, result: update.Result{Path: "/x"}}
+	m := afterGuard(t, checked(t, f))
+	m, cmd := press(t, m, "enter")
+	if m.upd.phase != updateInstalling || cmd == nil {
+		t.Fatalf("phase = %v", m.upd.phase)
+	}
+}
+
+func TestTheModalWaitsForAFreeScreen(t *testing.T) {
+	busy := map[string]func(*Model){
+		"another modal": func(m *Model) { m.openConfirm("delete-backup", "DELETE", "vol", 0, "Delete?") },
+		"help":          func(m *Model) { m.openModal(modalHelp, 0, "", "") },
+		"search":        func(m *Model) { m.inputMode = inputSearch },
+		"config":        func(m *Model) { m.showConfig = true },
+		"welcome":       func(m *Model) { m.modalMode = modalStartup },
+		"password":      func(m *Model) { m.modalMode = modalPasswd },
+	}
+	for name, setup := range busy {
+		f := &fakeUpdater{info: newerVersion()}
+		m := updatableModel(f)
+		setup(&m)
+		before := m.modalMode
+		m, cmd := deliver(t, m, updateStartMsg{})
+		m, _ = execute(t, m, cmd)
+		if m.modalMode != before || m.upd.offered || !m.upd.offer {
+			t.Errorf("%s: mode=%q offered=%t offer=%t: the modal must wait", name, m.modalMode, m.upd.offered, m.upd.offer)
+			continue
+		}
+		// A key press, even the one that frees the screen, does not open it...
+		m.modalMode, m.inputMode, m.showConfig = modalNone, inputNone, false
+		m, _ = press(t, m, "j")
+		if m.modalMode != modalNone || !m.upd.offer {
+			t.Errorf("%s: a key press must not open the modal (mode=%q)", name, m.modalMode)
+			continue
+		}
+		// ...the next tick or result does.
+		m, _ = deliver(t, m, spinMsg{})
+		if m.modalMode != modalUpdate || !m.upd.guard {
+			t.Errorf("%s: mode=%q: the modal opens once the screen is free", name, m.modalMode)
+		}
+	}
+}
+
+func TestNoModalWhenThereIsNothingToOffer(t *testing.T) {
+	for name, f := range map[string]*fakeUpdater{
+		"up to date": {info: upToDate()},
+		"error":      {checkErr: errors.New("no route to host")},
+		"dev build":  {checkErr: update.ErrDev},
+		"disabled":   {checkErr: update.ErrDisabled},
+	} {
+		m := checked(t, f)
+		if m.modalMode != modalNone || m.upd.offer || m.upd.offered {
+			t.Errorf("%s: mode=%q offer=%t", name, m.modalMode, m.upd.offer)
+		}
+	}
+	// A check the user asked for is shown in the modal that is already open: no offer.
+	m := updatableModel(&fakeUpdater{info: newerVersion()})
+	m, _ = deliver(t, m, updateCheckMsg{info: newerVersion(), manual: true})
+	if m.upd.offer || m.modalMode != modalNone {
+		t.Fatalf("a manual check must not offer: offer=%t mode=%q", m.upd.offer, m.modalMode)
+	}
+}
+
+func TestAnOfferThatGoesStaleIsDropped(t *testing.T) {
+	m := updatableModel(&fakeUpdater{info: newerVersion()})
+	m.modalMode = modalHelp
+	m, _ = deliver(t, m, updateCheckMsg{info: newerVersion()})
+	if !m.upd.offer {
+		t.Fatal("the offer waits")
+	}
+	// Meanwhile an installation started by hand: nothing may pop over it.
+	m.upd.phase = updateInstalling
+	m.modalMode = modalNone
+	m, _ = deliver(t, m, spinMsg{})
+	if m.modalMode != modalNone || m.upd.offer {
+		t.Fatalf("mode=%q offer=%t", m.modalMode, m.upd.offer)
 	}
 }

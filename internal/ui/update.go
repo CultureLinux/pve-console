@@ -9,6 +9,21 @@ import (
 
 // Update handles key presses and the results of asynchronous commands.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	next, cmd := m.route(msg)
+	if _, isKey := msg.(tea.KeyMsg); isKey {
+		// Never on a key press: the key that closes a modal must not land in the next one.
+		return next, cmd
+	}
+	model, ok := next.(Model)
+	if !ok {
+		return next, cmd
+	}
+	model, offer := model.offerUpdate()
+	return model, tea.Batch(cmd, offer)
+}
+
+// route sends a message to the code that handles it.
+func (m Model) route(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -581,6 +596,8 @@ func (m Model) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case updateCheckMsg:
 		m = m.handleUpdateCheck(msg)
+	case updateGuardMsg:
+		m.upd.guard = false
 	case updateStepMsg:
 		return m.handleUpdateStep(msg)
 	case updateInstallDoneMsg:

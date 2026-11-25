@@ -250,7 +250,7 @@ func (r *demoRunner) get(path string, parts []string, args []string) (command.Re
 			{"userid": "alice@pve", "enable": 1, "email": "alice@example.test", "firstname": "Alice", "lastname": "Martin"},
 			{"userid": "backup@pve", "enable": 0, "comment": "service account"},
 		})
-	case len(parts) == 4 && parts[0] == "access" && parts[2] != "" && parts[3] == "tfa":
+	case len(parts) == 3 && parts[0] == "access" && parts[1] == "tfa" && parts[2] != "":
 		entries := []map[string]any{}
 		if parts[2] == "root@pam" {
 			entries = append(entries, map[string]any{"id": "1", "type": "totp", "description": "phone", "created": 1700000000})

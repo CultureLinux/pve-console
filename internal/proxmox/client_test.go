@@ -281,7 +281,7 @@ func TestUsers(t *testing.T) {
 func TestUserTFAParsesObjectResponse(t *testing.T) {
 	runner := &command.MockRunner{
 		Responses: map[string]command.Result{
-			"pvesh get /access/users/root@pam/tfa --output-format json": {Stdout: []byte(`{"totp":{"type":"totp","description":"phone"},"webauthn":{"type":"webauthn","description":"key"}}`)},
+			"pvesh get /access/tfa/root@pam --output-format json": {Stdout: []byte(`{"totp":{"type":"totp","description":"phone"},"webauthn":{"type":"webauthn","description":"key"}}`)},
 		},
 	}
 	client := Client{Runner: runner, Node: "pve"}

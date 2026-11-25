@@ -39,8 +39,8 @@ func typeDigits(t *testing.T, m Model, digits string) Model {
 
 func TestEnrollFullFlow(t *testing.T) {
 	runner := &fakeRunner{stdout: map[string]string{
-		"-type recovery":              `{"id":"20","recovery":["aaaa-1111","bbbb-2222"]}`,
-		"/access/users/alice@pve/tfa": `[{"id":"10","type":"totp","description":"pve-console"}]`,
+		"-type recovery":            `{"id":"20","recovery":["aaaa-1111","bbbb-2222"]}`,
+		"get /access/tfa/alice@pve": `[{"id":"10","type":"totp","description":"pve-console"}]`,
 	}}
 	m := enrollModel(t, runner)
 
@@ -290,7 +290,7 @@ func TestDemoEnroll(t *testing.T) {
 	if err := create("-type", "totp", "-value", "123456", "-description", "pve-console"); err != nil {
 		t.Fatal(err)
 	}
-	list, err := r.Run(ctx, "pvesh", "get", "/access/users/alice@pve/tfa", "--output-format", "json")
+	list, err := r.Run(ctx, "pvesh", "get", "/access/tfa/alice@pve", "--output-format", "json")
 	if err != nil || !strings.Contains(string(list.Stdout), "pve-console") {
 		t.Fatalf("list = %s, %v", list.Stdout, err)
 	}

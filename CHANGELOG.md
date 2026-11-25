@@ -2,6 +2,17 @@
 
 Notable changes of pve-console, by release. The entries are the summaries of the commits.
 
+## v0.2.2 - 2026-11-25
+
+### Fixes
+
+- Lit les facteurs 2FA via /access/tfa/<userid>
+
+### Configuration
+
+- Fixe l'identité des commits publics (CultureLinux)
+
+
 ## v0.2.1 - 2026-11-25
 
 ### Features

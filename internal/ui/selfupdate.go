@@ -47,12 +47,20 @@ type updateState struct {
 	feed    chan tea.Msg
 	// announced is true once the status row told about this update.
 	announced bool
+	// offer is true while the modal is waiting for a free screen to open on its own.
+	offer bool
+	// offered is true once the modal opened on its own: it does so once per session.
+	offered bool
+	// guard is true just after that: enter is ignored, so that a habitual key does not install.
+	guard bool
 }
 
 const (
 	// startupUpdateDelay lets the screen load before the first check.
-	startupUpdateDelay   = 10 * time.Second
-	updateCheckTimeout   = 15 * time.Second
+	startupUpdateDelay = 10 * time.Second
+	updateCheckTimeout = 15 * time.Second
+	// updateGuardDelay is how long enter is ignored after the modal opened on its own.
+	updateGuardDelay     = 1500 * time.Millisecond
 	updateInstallTimeout = 5 * time.Minute
 )
 
@@ -65,6 +73,9 @@ type updateCheckMsg struct {
 	err    error
 	manual bool
 }
+
+// updateGuardMsg ends the guard that follows the automatic opening of the modal.
+type updateGuardMsg struct{}
 
 // updateStepMsg is a step of the running installation.
 type updateStepMsg struct{ text string }
@@ -120,6 +131,7 @@ func (m Model) openUpdate() (Model, tea.Cmd) {
 		return m, nil
 	}
 	m.modalMode = modalUpdate
+	m.upd.guard = false
 	retry := m.upd.phase == updateKnown && m.upd.err != nil && !quietUpdateError(m.upd.err)
 	if m.upd.phase == updateIdle || retry {
 		m.upd.phase = updateChecking
@@ -144,6 +156,9 @@ func (m Model) handleUpdateKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 			return m, m.checkUpdate(true)
 		}
 	case "enter":
+		if u.guard {
+			return m, nil
+		}
 		switch {
 		case u.phase == updateInstalled:
 			if m.demo {
@@ -219,6 +234,10 @@ func (m Model) handleUpdateCheck(msg updateCheckMsg) Model {
 		return m
 	}
 	m.upd.info, m.upd.hasInfo = msg.info, true
+	// A check in the background that finds an update opens the modal, once, when the screen is free.
+	if msg.info.Available && !msg.manual && !m.upd.offered {
+		m.upd.offer = true
+	}
 	if msg.info.Available && !m.upd.announced {
 		m.upd.announced = true
 		if m.message == "" {
@@ -226,6 +245,24 @@ func (m Model) handleUpdateCheck(msg updateCheckMsg) Model {
 		}
 	}
 	return m
+}
+
+// offerUpdate opens the update modal on its own, once, as soon as the screen is
+// free: no other modal, no search being typed, no configuration panel.
+func (m Model) offerUpdate() (Model, tea.Cmd) {
+	if !m.upd.offer {
+		return m, nil
+	}
+	if !m.updateAvailable() {
+		m.upd.offer = false
+		return m, nil
+	}
+	if m.modalMode != modalNone || m.inputMode != inputNone || m.showConfig {
+		return m, nil
+	}
+	m.upd.offer, m.upd.offered, m.upd.guard = false, true, true
+	m.modalMode = modalUpdate
+	return m, tea.Tick(updateGuardDelay, func(time.Time) tea.Msg { return updateGuardMsg{} })
 }
 
 // handleUpdateStep shows a step of the installation and waits for the next message.

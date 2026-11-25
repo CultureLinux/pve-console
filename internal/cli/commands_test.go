@@ -398,9 +398,9 @@ func TestUpdatesUsageErrors(t *testing.T) {
 
 func userResponses() map[string]command.Result {
 	return map[string]command.Result{
-		"pvesh get /access/users --output-format json":              ok(`[{"userid":"root@pam","enable":true,"email":"r@x"},{"userid":"bob@pve","enable":true}]`),
-		"pvesh get /access/users/root@pam/tfa --output-format json": ok(`[{"id":"1","type":"totp","description":"phone"}]`),
-		"pvesh get /access/users/bob@pve/tfa --output-format json":  ok(`[]`),
+		"pvesh get /access/users --output-format json":        ok(`[{"userid":"root@pam","enable":true,"email":"r@x"},{"userid":"bob@pve","enable":true}]`),
+		"pvesh get /access/tfa/root@pam --output-format json": ok(`[{"id":"1","type":"totp","description":"phone"}]`),
+		"pvesh get /access/tfa/bob@pve --output-format json":  ok(`[]`),
 	}
 }
 

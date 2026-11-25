@@ -261,7 +261,7 @@ func (c Client) UserTFA(ctx context.Context, userid string) ([]TFAEntry, error) 
 	if err := validate.UserID(userid); err != nil {
 		return nil, err
 	}
-	result, err := c.Runner.Run(ctx, "pvesh", "get", fmt.Sprintf("/access/users/%s/tfa", userid), "--output-format", "json")
+	result, err := c.Runner.Run(ctx, "pvesh", "get", "/access/tfa/"+userid, "--output-format", "json")
 	if err != nil {
 		return nil, fmt.Errorf("unable to list TFA entries for user %s: %w", userid, err)
 	}
