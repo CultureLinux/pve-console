@@ -4,6 +4,7 @@
 
 **A terminal cockpit for Proxmox VE.** Run it on the node: see every guest, backup, update and task result on one screen, and act on them with confirmation, never by accident.
 
+![Release](https://img.shields.io/github/v/release/CultureLinux/pve-console?style=flat-square)
 ![Proxmox VE 9](https://img.shields.io/badge/Proxmox%20VE-9.x-E57000?style=flat-square)
 ![Go 1.26](https://img.shields.io/badge/Go-1.26-00ADD8?style=flat-square)
 ![linux/amd64, static binary](https://img.shields.io/badge/linux%2Famd64-static%20binary-555?style=flat-square)
@@ -24,16 +25,45 @@
 
 ## Quick start
 
-Download the `pve-console` binary from the [latest release](../../releases/latest), or [build it](#build-from-source).
+On a Proxmox node, as root, one command installs it (and updates it when you run it again). It downloads the binary of a GitHub release, **checks its SHA-256 sum** against the one published with it, and installs it as `/usr/local/sbin/pve-console`:
 
 ```bash
-# Look around first: fake data, no node, no root
-./pve-console tui --demo
-
-# On a Proxmox node, as root
-install -o root -g root -m 0755 pve-console /usr/local/sbin/pve-console
+curl -fsSL https://raw.githubusercontent.com/CultureLinux/pve-console/main/install.sh | bash
 pve-console            # the terminal UI
 pve-console check      # health checks, usable from cron or monitoring
+```
+
+| You want | Command |
+|---|---|
+| the latest release (default) | `… \| bash` |
+| the newest build of `main`, rebuilt at every change (a pre-release) | `… \| bash -s -- --edge` |
+| a given version | `… \| bash -s -- --version v0.2.0` |
+| to see what it would do, changing nothing | `… \| bash -s -- --dry-run` |
+
+Prefer to read it first? Download [`install.sh`](install.sh), read it, run it. Or take the `pve-console_linux_amd64` file and its `SHA256SUMS` from the [releases](../../releases) page by hand, then `sha256sum -c SHA256SUMS`.
+
+### Install the latest build
+
+The **latest build** is rebuilt from `main` at every change. It is a pre-release, so it can be ahead of the last version: take it to try what was just added. With the script, or by hand with the same checks:
+
+```bash
+# with the script
+curl -fsSL https://raw.githubusercontent.com/CultureLinux/pve-console/main/install.sh | bash -s -- --edge
+
+# or by hand: download, check the sum, install
+curl -fsSLO https://github.com/CultureLinux/pve-console/releases/download/latest/pve-console_linux_amd64
+curl -fsSLO https://github.com/CultureLinux/pve-console/releases/download/latest/SHA256SUMS
+sha256sum -c SHA256SUMS
+install -o root -g root -m 0755 pve-console_linux_amd64 /usr/local/sbin/pve-console
+pve-console version      # pve-console latest (<commit>, <date>)
+```
+
+Once installed, the program follows the channel it came from: a build of `latest` sees newer builds of `latest`, a versioned release sees newer releases (see [Stays up to date](#stays-up-to-date)).
+
+Look around first, with fake data, no node and no root:
+
+```bash
+pve-console tui --demo
 ```
 
 The UI needs a UTF-8 terminal of at least 60×14. `?` shows every key.
@@ -69,6 +99,19 @@ If the index refresh fails, nothing is upgraded and the error stays on screen.
 - **The tasks of the whole cluster** are in it, exactly as the web interface shows them in its task panel: scheduled backups, package updates, jobs started elsewhere. The list is read every 15 s; at start only the last 24 hours are imported.
 - **The detail** shows the message, the command line, the exit code and its output, or the end of the task log.
 - `tab` filters by source, `f` by outcome, `/` searches, `x` clears. The same error repeating is counted `×N`. The log is kept in memory for the session (500 entries; when full, the oldest success goes first, so errors stay longer).
+
+### Stays up to date
+
+<img src="docs/media/update.svg" alt="The version in the header, an update available, the installation and the restart" width="860">
+
+- **The version is always in the header** (`v0.2.0`, or `edge 3f9a2c1` for a build of `latest`).
+- **A new version is detected** a few seconds after the start: one request to GitHub, in the background, never blocking. If the node has no Internet access nothing happens and nothing is logged. When there is one, the header shows `⬆ v0.2.1`, the status row says so and `U update` joins the keys at the bottom.
+- **`U` opens the update.** It shows the installed and the available version and the notes of the release. **Nothing is installed until you confirm with `enter`.**
+- **The install is checked**: the new binary is downloaded next to the running one, its SHA-256 sum is compared with the one published in the release, and it is run once (`version`) to make sure it works. Only then does it replace the program, atomically. The old one stays next to it as `pve-console.prev`, so going back is a `mv`. A failure at any step changes nothing.
+- **Restart**: the running program keeps the old code until it restarts. `enter` closes the terminal UI properly and starts the new version in its place; `esc` leaves it for later (the header keeps a `⟳ restart` reminder).
+- A versioned release follows the releases; a build of `latest` follows `latest`. A local or CI build never looks for updates.
+
+The only thing sent is a `User-Agent` (`pve-console/<version>`). To turn the check off, run `pve-console tui --no-update-check`, or set `PVE_CONSOLE_NO_UPDATE_CHECK=1`.
 
 ## Command line
 
@@ -122,6 +165,7 @@ Exit codes of the action commands: `0` success, `1` the operation failed, `2` us
   | `snapshot rollback`, `backup restore`, `updates upgrade` | 30 min |
 
 - `--wait` is bounded by `--timeout` (default 30 min).
+- `pve-console tui` options: `--demo` (fake data), `--no-update-check` (do not look for a new version on GitHub; same as `PVE_CONSOLE_NO_UPDATE_CHECK=1`).
 - The TUI must run as root, except with `--demo`. On its first launch it writes a small `~/.pve-console` file (version and creation date); if that fails it warns and starts anyway.
 
 </details>
@@ -155,6 +199,7 @@ Exit codes: `0` OK or INFO only · `1` WARN · `2` FAIL · `3` internal error. T
 | `f` · `t` | cycle the status filter (all, running, stopped) · the sort (ID, name, status) |
 | `tab` | cycle the guest type (all, QEMU, LXC) · backups volumes/jobs · log source |
 | `r` | refresh the view |
+| `U` | version and updates: look for a new version, update (asks first) |
 | `esc` | close the modal or sub-section, then return to guests, then quit |
 | `?` or `h` · `q` | help · quit |
 
@@ -199,7 +244,7 @@ install -o root -g root -m 0755 bin/pve-console /usr/local/sbin/pve-console
 pve-console version
 ```
 
-Releases: every push to `main` runs the checks (`gofmt`, `go vet`, `go test -race`), builds the linux/amd64 binary and updates the **latest** release.
+Releases: a version tag `vX.Y.Z` publishes the release of that version (binary, `SHA256SUMS`, notes from [`CHANGELOG.md`](CHANGELOG.md)); every push to `main` rebuilds the **latest build** pre-release. Both run the checks first (`gofmt`, `go vet`, `go test -race`).
 
 ## Development
 

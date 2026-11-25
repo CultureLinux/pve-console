@@ -4,12 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"pvc/internal/command"
 	"pvc/internal/proxmox"
+	"pvc/internal/update"
+	"pvc/internal/version"
 )
 
 // DemoClient returns a client wired to a fake Proxmox node, so the TUI can be
@@ -364,4 +368,62 @@ func (r *demoRunner) create(path string, parts []string, args []string) (command
 		return r.upid("qm"+parts[5], parts[3]), nil
 	}
 	return r.upid("demo", ""), nil
+}
+
+// demoStepDelay is the pause between the steps of the demo update.
+var demoStepDelay = 500 * time.Millisecond
+
+// demoUpdater plays a new version on the fake node: nothing is read from the
+// network or installed.
+type demoUpdater struct{}
+
+// DemoUpdater returns the updater of the demo: a newer version is always
+// "available", and installing it only shows the steps.
+func DemoUpdater() Updater { return demoUpdater{} }
+
+var demoVersionPattern = regexp.MustCompile(`^([0-9]+)\.([0-9]+)\.([0-9]+)`)
+
+// demoNextVersion is the version after current: the next patch of a release,
+// or a fixed one for any other build.
+
+func demoNextVersion(current string) string {
+	m := demoVersionPattern.FindStringSubmatch(current)
+	if m == nil {
+		return "v9.9.9"
+	}
+	patch, _ := strconv.Atoi(m[3])
+	return fmt.Sprintf("v%s.%s.%d", m[1], m[2], patch+1)
+}
+
+func (demoUpdater) Check(context.Context) (update.Info, error) {
+	latest := demoNextVersion(version.Version)
+	return update.Info{
+		Kind:      version.KindStable,
+		Current:   version.DisplayOf(version.Version, version.Commit),
+		Latest:    latest,
+		Tag:       latest,
+		Available: true,
+		Notes:     "### Features\n\n- Guided package upgrade, with a reboot warning\n- One log for errors and results\n\n### Fixes\n\n- The snapshot of a VM with virtiofs no longer saves its RAM",
+	}, nil
+}
+
+func (demoUpdater) Install(ctx context.Context, info update.Info, progress func(string)) (update.Result, error) {
+	for _, step := range []string{
+		"downloading " + update.Asset + " (" + info.Tag + ")",
+		"checking the SHA-256 sum",
+		"checking that the new binary runs",
+		"installing",
+	} {
+		select {
+		case <-ctx.Done():
+			return update.Result{}, ctx.Err()
+		case <-time.After(demoStepDelay):
+		}
+		progress(step)
+	}
+	return update.Result{
+		Path:     "/usr/local/sbin/pve-console",
+		Previous: "/usr/local/sbin/pve-console.prev",
+		Version:  "pve-console " + strings.TrimPrefix(info.Tag, "v") + " (demo)",
+	}, nil
 }

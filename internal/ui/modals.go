@@ -93,6 +93,8 @@ func (m Model) modal(width int) string {
 		return m.scheduleModal(width)
 	case modalUpgrade:
 		return m.upgradeModal(width)
+	case modalUpdate:
+		return m.updateModal(width)
 	case modalConfirm:
 		return m.confirmModal(width)
 	}
@@ -262,6 +264,7 @@ var helpSections = []helpSection{
 		{"enter", "guest configuration"},
 		{"esc", "back / close"},
 		{"r", "refresh"},
+		{"U", "version and updates"},
 		{"q", "quit"},
 	}},
 	{"VIEWS", [][2]string{

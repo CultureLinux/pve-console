@@ -13,6 +13,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
+
+	"pvc/internal/version"
 )
 
 // screenCols is the width of the terminal the captures show; each scenario has
@@ -57,6 +59,7 @@ var screenScenarios = []struct {
 	{"guests", "pve-console · guests, snapshots, backups", 28, playGuests},
 	{"upgrade", "pve-console · guided package upgrade", 30, playUpgrade},
 	{"log", "pve-console · errors and results in one log", 38, playLog},
+	{"update", "pve-console · version and update from the terminal UI", 30, playUpdate},
 }
 
 func playGuests(t *testing.T, r *recorder) {
@@ -161,6 +164,47 @@ func playLog(t *testing.T, r *recorder) {
 	r.snap(m, 2000*time.Millisecond)
 }
 
+// playUpdate plays the detection and the installation of a new version.
+func playUpdate(t *testing.T, r *recorder) {
+	previous := demoStepDelay
+	demoStepDelay = 0
+	t.Cleanup(func() { demoStepDelay = previous })
+
+	m := demoScreenModel(r.rows)
+	m.updater = DemoUpdater()
+	m, _ = execute(t, m, m.load)
+	// What the first check does a few seconds after the start.
+	m, cmd := deliver(t, m, updateStartMsg{})
+	m, _ = execute(t, m, cmd)
+	r.snap(m, 2800*time.Millisecond)
+
+	m, _ = press(t, m, "U")
+	r.snap(m, 3800*time.Millisecond)
+
+	m, cmd = press(t, m, "enter")
+	steps := 0
+	for cmd != nil {
+		msg := cmd()
+		m, cmd = deliver(t, m, msg)
+		if _, ok := msg.(updateStepMsg); ok {
+			steps++
+			if steps == 2 {
+				r.snap(m, 1300*time.Millisecond)
+			}
+		}
+	}
+	if m.upd.phase != updateInstalled {
+		t.Fatalf("the demo update must end installed, phase=%v err=%v", m.upd.phase, m.upd.err)
+	}
+	r.snap(m, 4200*time.Millisecond)
+
+	m, _ = press(t, m, "esc")
+	r.snap(m, 2800*time.Millisecond)
+
+	m, _ = press(t, m, "L")
+	r.snap(m, 3000*time.Millisecond)
+}
+
 // TestGenerateScreens writes the README captures in $PVC_SCREENS_DIR (make
 // screens). Without that variable it does nothing.
 func TestGenerateScreens(t *testing.T) {
@@ -176,6 +220,11 @@ func TestGenerateScreens(t *testing.T) {
 	lipgloss.SetColorProfile(termenv.TrueColor)
 	lipgloss.SetHasDarkBackground(true)
 	t.Cleanup(func() { lipgloss.SetColorProfile(termenv.Ascii) })
+
+	// The captures show a release, whatever this test binary was built as.
+	previousVersion, previousCommit := version.Version, version.Commit
+	version.Version, version.Commit = "0.2.0", "3f9a2c1d5e7b9a0c2d4e6f8a1b3c5d7e9f0a1b2c"
+	t.Cleanup(func() { version.Version, version.Commit = previousVersion, previousCommit })
 
 	for _, scenario := range screenScenarios {
 		t.Run(scenario.name, func(t *testing.T) {

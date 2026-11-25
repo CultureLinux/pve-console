@@ -158,15 +158,47 @@ func (m Model) headerTop(width int) string {
 		}
 		tiers[i] = tier
 	}
-	if len(tiers) == 0 && activity != "" {
+	if len(tiers) == 0 {
 		tiers = []string{activity}
 	}
-	for _, right := range tiers {
-		if textWidth(left)+2+textWidth(right) <= width {
+
+	// The version and the update mark go in front of the counters. The narrower the
+	// screen, the more is dropped, in this order: the version, then the full counters
+	// (kept short), and last the mark of a new version, which matters more than them.
+	tag := ""
+	if m.versionText != "" {
+		tag = styleMuted.Render(m.versionText)
+	}
+	indicator := m.updateIndicator()
+	var candidates []string
+	if indicator != "" {
+		both := joinNonEmpty("  ", tag, indicator)
+		for _, tier := range tiers {
+			candidates = append(candidates, joinNonEmpty("   ", both, tier), joinNonEmpty("   ", indicator, tier))
+		}
+		candidates = append(candidates, tiers...)
+	} else {
+		for _, tier := range tiers {
+			candidates = append(candidates, joinNonEmpty("   ", tag, tier), tier)
+		}
+	}
+	for _, right := range candidates {
+		if right != "" && textWidth(left)+2+textWidth(right) <= width {
 			return rightAlign(left, right, width)
 		}
 	}
 	return fit(left, width)
+}
+
+// joinNonEmpty joins the parts that are not empty.
+func joinNonEmpty(sep string, parts ...string) string {
+	var kept []string
+	for _, part := range parts {
+		if part != "" {
+			kept = append(kept, part)
+		}
+	}
+	return strings.Join(kept, sep)
 }
 
 func (m Model) headerTabs(width int) string {
@@ -305,6 +337,15 @@ var tailHints = []hint{{"?", "help"}, {"q", "quit"}}
 // hints returns the hints of the current screen, most useful first, and the
 // ones that always stay.
 func (m Model) hints() ([]hint, []hint) {
+	hints, tail := m.baseHints()
+	// A new version is announced on every screen, next to help and quit.
+	if m.modalMode == modalNone && (m.updateAvailable() || m.upd.phase == updateInstalled) {
+		tail = append([]hint{{"U", "update"}}, tail...)
+	}
+	return hints, tail
+}
+
+func (m Model) baseHints() ([]hint, []hint) {
 	switch m.modalMode {
 	case modalStartup:
 		return []hint{{"enter", "continue"}, {"esc", "close"}}, nil
@@ -312,6 +353,8 @@ func (m Model) hints() ([]hint, []hint) {
 		return []hint{{"esc", "close"}}, nil
 	case modalConfirm:
 		return []hint{{"enter", "confirm"}, {"esc", "cancel"}}, nil
+	case modalUpdate:
+		return m.updateHints(), nil
 	case modalUpgrade:
 		if m.upgradeRunning {
 			return []hint{{"…", "upgrade running"}}, nil
@@ -398,9 +441,9 @@ func messageLevel(message string) level {
 	switch {
 	case contains("failed", "error", "unable", "invalid", "lost track", "mismatch", "refus", "denied", "not found", "cannot", "is required", "are required"):
 		return levelError
-	case contains("not running", "still running", "reboot required"):
+	case contains("not running", "still running", "reboot required", "update available"):
 		return levelWarn
-	case contains("completed", ": ok", "created", "started", "loaded", "disabled", "scheduled", "requested"):
+	case contains("completed", ": ok", "created", "started", "loaded", "disabled", "scheduled", "requested", "updated to"):
 		return levelOK
 	}
 	return levelInfo

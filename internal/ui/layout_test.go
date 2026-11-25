@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"pvc/internal/proxmox"
+	"pvc/internal/update"
+	"pvc/internal/version"
 )
 
 // richModel is a model with data in every section, including awkward names.
@@ -97,6 +99,43 @@ func screens() []screen {
 		}},
 		{"modal upgrade up to date", func(m *Model) {
 			m.modalMode, m.upgradePhase, m.upgradeNote = modalUpgrade, upgradeIndex, "Everything is up to date."
+		}},
+		{"header with an update", func(m *Model) {
+			m.versionText = "v0.2.0"
+			m.upd = updateState{phase: updateKnown, hasInfo: true, info: update.Info{Current: "v0.2.0", Latest: "v0.2.1", Available: true}}
+		}},
+		{"header with a restart to do", func(m *Model) { m.versionText, m.upd.phase = "v0.2.0", updateInstalled }},
+		{"modal update checking", func(m *Model) { m.modalMode, m.versionText, m.upd.phase = modalUpdate, "v0.2.0", updateChecking }},
+		{"modal update available", func(m *Model) {
+			m.modalMode, m.versionText = modalUpdate, "v0.2.0"
+			m.upd = updateState{phase: updateKnown, hasInfo: true, info: update.Info{
+				Kind: version.KindStable, Current: "v0.2.0", Latest: "v0.2.1", Available: true,
+				Notes: strings.Repeat("- a rather long line of release notes that must not overflow the modal at all\n", 20),
+			}}
+		}},
+		{"modal update edge", func(m *Model) {
+			m.modalMode, m.versionText = modalUpdate, "edge 3f9a2c1"
+			m.upd = updateState{phase: updateKnown, hasInfo: true, info: update.Info{Kind: version.KindEdge, Current: "edge 3f9a2c1", Latest: "edge aaaaaaa", Available: true}}
+		}},
+		{"modal update up to date", func(m *Model) {
+			m.modalMode, m.versionText = modalUpdate, "v0.2.0"
+			m.upd = updateState{phase: updateKnown, hasInfo: true, info: update.Info{Kind: version.KindStable, Current: "v0.2.0", Latest: "v0.2.0"}}
+		}},
+		{"modal update installing", func(m *Model) {
+			m.modalMode, m.versionText = modalUpdate, "v0.2.0"
+			m.upd = updateState{phase: updateInstalling, info: update.Info{Latest: "v0.2.1"}, steps: []string{"downloading " + update.Asset + " (v0.2.1) from a very long address", "checking the SHA-256 sum"}}
+		}},
+		{"modal update installed", func(m *Model) {
+			m.modalMode, m.versionText = modalUpdate, "v0.2.0"
+			m.upd = updateState{phase: updateInstalled, info: update.Info{Latest: "v0.2.1"}, result: update.Result{Path: "/usr/local/sbin/pve-console", Previous: "/usr/local/sbin/pve-console.prev"}}
+		}},
+		{"modal update error", func(m *Model) {
+			m.modalMode = modalUpdate
+			m.upd = updateState{phase: updateKnown, err: fmt.Errorf("unable to read the latest release: %s", strings.Repeat("GitHub answered 500. ", 10))}
+		}},
+		{"modal update disabled", func(m *Model) {
+			m.modalMode = modalUpdate
+			m.upd = updateState{phase: updateKnown, err: update.ErrDisabled}
 		}},
 		{"modal upgrade error", func(m *Model) { m.modalMode, m.upgradeErr = modalUpgrade, fmt.Errorf("apt failed") }},
 		{"modal tfa", func(m *Model) { m.viewMode, m.inputMode, m.input = viewUsers, inputDisableTFA, "root" }},

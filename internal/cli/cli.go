@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"runtime"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -15,6 +17,7 @@ import (
 	"pvc/internal/platform"
 	"pvc/internal/proxmox"
 	"pvc/internal/ui"
+	"pvc/internal/update"
 	"pvc/internal/validate"
 	"pvc/internal/version"
 )
@@ -26,7 +29,7 @@ const usage = `pve-console - Proxmox CLI Manager
 Usage:
   pve-console [global options] <command>
   pve-console
-  pve-console tui [--demo]
+  pve-console tui [--demo] [--no-update-check]
   pve-console version
   pve-console status [--json]
   pve-console vm list [--json]
@@ -62,7 +65,8 @@ Global options:
   -y, --yes         Confirm a destructive command (required by stop, shutdown, reboot, delete, rollback, restore, upgrade, tfa disable)
 
 Commands:
-  tui            Open interactive terminal UI (--demo: fake data, no node needed)
+  tui            Open interactive terminal UI (--demo: fake data, no node needed; --no-update-check:
+                 do not look for a new version on GitHub, same as PVE_CONSOLE_NO_UPDATE_CHECK=1)
   version        Print version information
   status         Print node, guest and storage summary
   vm list        List QEMU VMs and LXC containers
@@ -239,26 +243,73 @@ func runSnapshot(ctx context.Context, client proxmox.Client, args []string, opts
 // runDemoTUI starts the TUI on fake data (a variable so tests do not open a terminal).
 var runDemoTUI = ui.RunDemo
 
+// runRealTUI starts the TUI on the node, and restartProcess starts the program
+// again after an update; executablePath finds the running program. All three are
+// variables so tests neither open a terminal nor replace the test process.
+var (
+	runRealTUI     = ui.Run
+	restartProcess = platform.Restart
+	executablePath = os.Executable
+)
+
+// noUpdateCheckEnv turns the update check off when it is set to anything but "" or "0".
+const noUpdateCheckEnv = "PVE_CONSOLE_NO_UPDATE_CHECK"
+
+func updateCheckDisabled(flag bool) bool {
+	if flag {
+		return true
+	}
+	value := os.Getenv(noUpdateCheckEnv)
+	return value != "" && value != "0"
+}
+
 func runTUI(client proxmox.Client, args []string, stderr io.Writer) int {
-	if len(args) == 1 && args[0] == "--demo" {
+	demo, noUpdateCheck := false, false
+	for _, arg := range args {
+		switch arg {
+		case "--demo":
+			demo = true
+		case "--no-update-check":
+			noUpdateCheck = true
+		default:
+			fmt.Fprintf(stderr, "unexpected argument for tui: %s\n\n", strings.Join(args, " "))
+			fmt.Fprint(stderr, usage)
+			return 2
+		}
+	}
+	if demo {
 		// Demo mode needs no root, no node and does not write the config file.
 		if err := runDemoTUI(); err != nil {
 			return printError(stderr, "Unable to run the demo TUI.", err)
 		}
 		return 0
 	}
-	if len(args) != 0 {
-		fmt.Fprintf(stderr, "unexpected argument for tui: %s\n\n", strings.Join(args, " "))
-		fmt.Fprint(stderr, usage)
-		return 2
-	}
 	if !isRoot() {
 		fmt.Fprintln(stderr, "Unable to run TUI: pve-console must be run as root.")
 		return 3
 	}
 	created := initConfig(stderr)
-	if err := ui.Run(client, created); err != nil {
+
+	exe, err := executablePath()
+	if err != nil {
+		// Without the path of the program it cannot replace itself: updates are left out.
+		noUpdateCheck = true
+	}
+	updater := update.Updater{
+		Client:   update.NewClient(runtime.GOOS, runtime.GOARCH),
+		Build:    update.Build{Version: version.Version, Commit: version.Commit},
+		Exe:      exe,
+		Disabled: updateCheckDisabled(noUpdateCheck),
+	}
+	restart, err := runRealTUI(client, created, updater)
+	if err != nil {
 		return printError(stderr, "Unable to run TUI.", err)
+	}
+	if restart {
+		// The terminal is restored: the program starts again, on the new version.
+		if err := restartProcess(exe, os.Args); err != nil {
+			return printError(stderr, "The update is installed, but pve-console could not restart itself. Start it again.", err)
+		}
 	}
 	return 0
 }

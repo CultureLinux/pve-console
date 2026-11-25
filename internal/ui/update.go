@@ -47,6 +47,9 @@ func (m Model) updateModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+	if m.modalMode == modalUpdate {
+		return m.handleUpdateKey(msg)
+	}
 	if m.modalMode == modalUpgrade {
 		switch msg.String() {
 		case "esc", "enter":
@@ -153,6 +156,8 @@ func (m Model) updateMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "?", "h":
 		m.openModal(modalHelp, 0, "", "")
+	case "U":
+		return m.openUpdate()
 	case "q", "ctrl+c":
 		return m, tea.Quit
 	case "esc":
@@ -550,6 +555,17 @@ func (m Model) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.pollTask(msg.upid)
 	case taskResultMsg:
 		return m.handleTaskResult(msg)
+	case updateStartMsg:
+		if m.upd.phase == updateIdle && m.updater != nil {
+			m.upd.phase = updateChecking
+			return m, m.checkUpdate(false)
+		}
+	case updateCheckMsg:
+		m = m.handleUpdateCheck(msg)
+	case updateStepMsg:
+		return m.handleUpdateStep(msg)
+	case updateInstallDoneMsg:
+		m = m.handleUpdateDone(msg)
 	case upgradeLineMsg:
 		return m.handleUpgradeLine(msg)
 	case upgradeStepDoneMsg:
