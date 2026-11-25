@@ -416,6 +416,9 @@ func runStatus(ctx context.Context, client proxmox.Client, opts Options, stdout 
 	if node.Kernel != "" {
 		fmt.Fprintf(stdout, "KERNEL\t%s\n", node.Kernel)
 	}
+	if node.Uptime > 0 {
+		fmt.Fprintf(stdout, "UPTIME\t%d\n", node.Uptime)
+	}
 	fmt.Fprintln(stdout)
 	printGuests(stdout, guests)
 	fmt.Fprintln(stdout)

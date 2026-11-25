@@ -33,6 +33,8 @@ type demoGuest struct {
 	MaxMem uint64  `json:"maxmem"`
 	Uptime int64   `json:"uptime"`
 	lxc    bool
+	// agent is the "agent" option of the configuration of a VM.
+	agent string
 }
 
 // demoAptUPID is the failed package index update of the demo's task panel.
@@ -60,7 +62,7 @@ func newDemoRunner() *demoRunner {
 		enrolled: map[string][]map[string]any{},
 		guests: []*demoGuest{
 			{VMID: 100, Name: "wordpress", Status: "running", CPU: 0.12, Memory: 1 * gib, MaxMem: 4 * gib, Uptime: 3*86400 + 7200},
-			{VMID: 101, Name: "postgres-primary", Status: "running", CPU: 0.61, Memory: 6 * gib, MaxMem: 8 * gib, Uptime: 12*86400 + 3600},
+			{VMID: 101, Name: "postgres-primary", Status: "running", CPU: 0.61, Memory: 6 * gib, MaxMem: 8 * gib, Uptime: 12*86400 + 3600, agent: "enabled=0"},
 			{VMID: 102, Name: "minio", Status: "stopped", MaxMem: 2 * gib},
 			{VMID: 103, Name: "win11-dev", Status: "stopped", MaxMem: 8 * gib},
 			{VMID: 200, Name: "nginx-proxy", Status: "running", CPU: 0.02, Memory: 210 << 20, MaxMem: gib / 2, Uptime: 5400, lxc: true},
@@ -199,9 +201,29 @@ func (r *demoRunner) pvesh(args []string) (command.Result, error) {
 		if path == "/access/password" && (option(args, "-userid") == "" || option(args, "-password") == "") {
 			return command.Result{}, demoRefusal("pvesh", args, "400 Parameter verification failed.\npassword: property is missing and it is not optional")
 		}
+		if len(parts) == 5 && parts[0] == "nodes" && parts[2] == "qemu" && parts[4] == "config" {
+			return r.setQEMUConfig(parts, args)
+		}
 		return command.Result{}, nil
 	}
 	return command.Result{}, demoFail("pvesh", args)
+}
+
+// setQEMUConfig applies the only option of a VM configuration the demo can set:
+// the guest agent.
+func (r *demoRunner) setQEMUConfig(parts []string, args []string) (command.Result, error) {
+	var vmid int
+	if _, err := fmt.Sscanf(parts[3], "%d", &vmid); err != nil {
+		return command.Result{}, demoFail("pvesh", args)
+	}
+	guest := r.find(vmid)
+	if guest == nil || guest.lxc {
+		return command.Result{}, demoMissing(args, parts)
+	}
+	if agent := option(args, "-agent"); agent != "" {
+		guest.agent = agent
+	}
+	return command.Result{}, nil
 }
 
 func (r *demoRunner) get(path string, parts []string, args []string) (command.Result, error) {
@@ -295,6 +317,10 @@ func (r *demoRunner) get(path string, parts []string, args []string) (command.Re
 		return demoJSON([]map[string]any{{"n": 1, "t": "demo task"}})
 	}
 
+	if path == "/nodes/pve/status" {
+		return demoJSON(map[string]any{"uptime": 41*86400 + 5*3600})
+	}
+
 	// /nodes/pve/{qemu|lxc}/<vmid>/{status/current|config|snapshot}
 	if len(parts) >= 5 && parts[0] == "nodes" && (parts[2] == "qemu" || parts[2] == "lxc") {
 		var vmid int
@@ -310,6 +336,22 @@ func (r *demoRunner) get(path string, parts []string, args []string) (command.Re
 			return demoJSON(guest)
 		case "config":
 			return demoJSON(demoConfig(guest))
+		case "interfaces":
+			return demoJSON([]map[string]any{
+				{"name": "lo", "inet": "127.0.0.1/8"},
+				{"name": "eth0", "inet": demoIPv4(guest.VMID) + "/24", "inet6": "fe80::1/64"},
+			})
+		case "agent/network-get-interfaces":
+			if guest.agent == "enabled=0" {
+				return command.Result{}, demoRefusal("pvesh", args, "QEMU guest agent is not enabled")
+			}
+			return demoJSON(map[string]any{"result": []map[string]any{
+				{"name": "lo", "ip-addresses": []map[string]any{{"ip-address": "127.0.0.1", "ip-address-type": "ipv4", "prefix": 8}}},
+				{"name": "eth0", "ip-addresses": []map[string]any{
+					{"ip-address": "fe80::1", "ip-address-type": "ipv6", "prefix": 64},
+					{"ip-address": demoIPv4(guest.VMID), "ip-address-type": "ipv4", "prefix": 24},
+				}},
+			}})
 		case "snapshot":
 			return demoJSON([]map[string]any{
 				{"name": "before-upgrade", "description": "Before the 9.0 upgrade", "snaptime": 1767500000},
@@ -321,6 +363,11 @@ func (r *demoRunner) get(path string, parts []string, args []string) (command.Re
 	return command.Result{}, demoFail("pvesh", args)
 }
 
+// demoIPv4 is the address the demo gives to a guest.
+func demoIPv4(vmid int) string {
+	return fmt.Sprintf("192.168.1.%d", 10+vmid%200)
+}
+
 func demoConfig(guest *demoGuest) map[string]any {
 	if guest.lxc {
 		return map[string]any{
@@ -330,9 +377,13 @@ func demoConfig(guest *demoGuest) map[string]any {
 			"net0":   "name=eth0,bridge=vmbr0,ip=dhcp,type=veth",
 		}
 	}
+	agent := guest.agent
+	if agent == "" {
+		agent = "1"
+	}
 	return map[string]any{
 		"name": guest.Name, "cores": 4, "sockets": 1, "cpu": "host", "memory": guest.MaxMem >> 20, "balloon": 0,
-		"scsihw": "virtio-scsi-single", "bios": "ovmf", "machine": "q35", "ostype": "l26", "agent": "1",
+		"scsihw": "virtio-scsi-single", "bios": "ovmf", "machine": "q35", "ostype": "l26", "agent": agent,
 		"scsi0": "local-lvm:vm-" + fmt.Sprint(guest.VMID) + "-disk-0,iothread=1,size=64G",
 		"net0":  "virtio=BC:24:11:AA:BB:CC,bridge=vmbr0,firewall=1",
 		"boot":  "order=scsi0;net0", "onboot": 1, "tags": "demo",

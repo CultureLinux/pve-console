@@ -2,6 +2,18 @@
 
 Notable changes of pve-console, by release. The entries are the summaries of the commits.
 
+## v0.2.3 - 2026-11-25
+
+### Features
+
+- Affiche l'IPv4 et l'état de l'agent d'un invité
+- Bascule le guest agent d'une VM avec la touche A
+
+### User experience
+
+- Affiche la touche A à côté de « agent off »
+
+
 ## v0.2.2 - 2026-11-25
 
 ### Fixes

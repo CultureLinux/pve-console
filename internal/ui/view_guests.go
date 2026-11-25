@@ -101,7 +101,11 @@ func (m Model) detailPanel(width int, height int) string {
 		if guest.Type == proxmox.GuestTypeLXC {
 			kind = "LXC container"
 		}
-		lines = append(lines, dotStyle.Render(dot)+" "+dotStyle.Render(guest.Status)+styleMuted.Render("  "+glyphSep+"  "+kind), "")
+		lines = append(lines, dotStyle.Render(dot)+" "+dotStyle.Render(guest.Status)+styleMuted.Render("  "+glyphSep+"  "+kind))
+		if line := m.guestNetLine(guest); line != "" {
+			lines = append(lines, line)
+		}
+		lines = append(lines, "")
 
 		barW := max(8, inner-9-5)
 		cpu, mem := 0.0, 0.0

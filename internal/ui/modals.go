@@ -170,7 +170,7 @@ func confirmKind(action string) (modalKind, buttonKind) {
 	switch action {
 	case "start-guest":
 		return modalKindInfo, buttonPrimary
-	case "reboot-guest", "shutdown-guest", "dist-upgrade":
+	case "reboot-guest", "shutdown-guest", "dist-upgrade", "enable-agent", "disable-agent":
 		return modalKindWarn, buttonWarn
 	}
 	return modalKindDanger, buttonDanger
@@ -194,6 +194,10 @@ func confirmLabel(action string) string {
 		return "Delete backup"
 	case "restore-backup":
 		return "Restore backup"
+	case "enable-agent":
+		return "Enable agent"
+	case "disable-agent":
+		return "Disable agent"
 	case "dist-upgrade":
 		return "Upgrade"
 	case "disable-tfa":
@@ -214,7 +218,7 @@ func sentenceCase(text string) string {
 func (m Model) confirmModal(width int) string {
 	kind, buttonColor := confirmKind(m.modalAction)
 	w := modalWidth(width, 64, 44)
-	body := []string{m.modalBody}
+	body := strings.Split(m.modalBody, "\n")
 	if kind == modalKindDanger {
 		body = append(body, "", styleMuted.Render("This cannot be undone."))
 	}
@@ -271,6 +275,7 @@ var helpSections = []helpSection{
 		{"-", "stop (forced)"},
 		{"S", "shut down (clean)"},
 		{"R", "reboot (clean)"},
+		{"A", "guest agent on / off"},
 		{"m", "run a backup"},
 	}},
 	{"SNAPSHOTS", [][2]string{

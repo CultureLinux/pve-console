@@ -125,6 +125,9 @@ func (m Model) headerTop(width int) string {
 	if version := proxmoxVersion(m.data.node.ProxmoxVersion); version != "" {
 		left += styleMuted.Render("  " + glyphSep + "  Proxmox VE " + version)
 	}
+	if uptime := m.data.node.Uptime; uptime > 0 {
+		left += styleMuted.Render("  " + glyphSep + "  up " + durationLabel(uptime))
+	}
 
 	running, stopped := 0, 0
 	for _, guest := range m.data.guests {

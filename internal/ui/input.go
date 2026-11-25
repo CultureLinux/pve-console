@@ -77,6 +77,10 @@ func (m Model) handleConfirmSubmit() (tea.Model, tea.Cmd) {
 		return m, m.rebootGuest(vmid)
 	case "shutdown-guest":
 		return m, m.shutdownGuest(vmid)
+	case "enable-agent":
+		return m, m.setAgent(vmid, true)
+	case "disable-agent":
+		return m, m.setAgent(vmid, false)
 	case "dist-upgrade":
 		return m.startConfirmedUpgrade()
 	case "disable-tfa":
@@ -218,6 +222,25 @@ func (m Model) handleInputSubmit() (tea.Model, tea.Cmd) {
 
 // confirmGuestRestart opens the confirmation for a clean reboot or shutdown. Both
 // only make sense on a running guest.
+// agentVerb is "enable" or "disable".
+func agentVerb(enable bool) string {
+	if enable {
+		return "enable"
+	}
+	return "disable"
+}
+
+// confirmAgent asks before turning the guest agent of a VM the other way round.
+func (m *Model) confirmAgent(state agentStateMsg) {
+	enable := !state.enabled
+	verb := agentVerb(enable)
+	body := fmt.Sprintf("%s the QEMU guest agent of VM %d (%s) ?\n\nThe VM must be stopped, then started again, to apply it:\na reboot from inside the guest is not enough.", sentenceCase(verb), state.vmid, state.name)
+	if enable {
+		body += "\n\nInstall the package in the VM:\n  dnf install qemu-guest-agent   (Rocky, RHEL)\n  apt install qemu-guest-agent   (Debian, Ubuntu)"
+	}
+	m.openConfirm(verb+"-agent", strings.ToUpper(verb)+" GUEST AGENT", fmt.Sprintf("%d", state.vmid), state.vmid, body)
+}
+
 func (m *Model) confirmGuestRestart(guest proxmox.Guest, reboot bool) {
 	if guest.Status != "running" {
 		m.message = fmt.Sprintf("guest %d is not running", guest.VMID)

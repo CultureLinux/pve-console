@@ -49,6 +49,13 @@ func (c Client) NodeInfo(ctx context.Context) (NodeInfo, error) {
 	if result, err := c.Runner.Run(ctx, "uname", "-r"); err == nil {
 		info.Kernel = strings.TrimSpace(string(result.Stdout))
 	}
+	// Best effort: the uptime is a secondary figure of the header.
+	var status struct {
+		Uptime int64 `json:"uptime"`
+	}
+	if err := c.pveshJSON(ctx, &status, "get", fmt.Sprintf("/nodes/%s/status", node), "--output-format", "json"); err == nil {
+		info.Uptime = status.Uptime
+	}
 
 	return info, nil
 }

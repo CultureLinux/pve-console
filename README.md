@@ -72,7 +72,7 @@ The UI needs a UTF-8 terminal of at least 60×14. `?` shows every key.
 
 ### Guests, snapshots, backups (the capture above)
 
-- **Guests**: start, stop, clean shutdown and clean reboot, with usage bars colored by level. Actions that start a Proxmox task are followed: the header counts the running tasks, shows `OK` or `FAILED` when each ends, and reloads the data.
+- **Guests**: start, stop, clean shutdown and clean reboot, with usage bars colored by level. The detail panel of a running guest shows its IPv4 and, for a QEMU VM, an agent marker: `● agent` (green) when the guest agent answers, amber when it is enabled but silent, `○ agent off` when disabled. Actions that start a Proxmox task are followed: the header counts the running tasks, shows `OK` or `FAILED` when each ends, and reloads the data.
 - **Snapshots**: list, create, delete and roll back. A QEMU snapshot keeps the RAM state, unless the VM cannot save it (virtiofs).
 - **Backups**: browse volumes (guest, date, size), run a backup, restore or delete a volume, and edit the schedule, storage and guests of a job. A restore overwrites the guest with that VMID and needs it stopped.
 - **Users**: list users, show their two-factor entries, enroll a TOTP (QR code drawn in the terminal, code checked by Proxmox, then recovery codes), change a password (`pve` and `pam` realms), and disable the entries after a confirmation.
@@ -205,7 +205,7 @@ Exit codes: `0` OK or INFO only · `1` WARN · `2` FAIL · `3` internal error. T
 
 | View | Keys |
 |---|---|
-| Guests | `+` start · `-` stop (forced) · `S` clean shutdown · `R` clean reboot · `m` run a backup · `enter` configuration (`↑` `↓` scroll, `esc` closes) · `s` snapshots · `n` new snapshot |
+| Guests | `+` start · `-` stop (forced) · `S` clean shutdown · `R` clean reboot · `A` guest agent on / off (QEMU VMs, applies after a full stop and start) · `m` run a backup · `enter` configuration (`↑` `↓` scroll, `esc` closes) · `s` snapshots · `n` new snapshot |
 | Snapshots | `↑` `↓` select · `d` delete · `o` roll back · `n` new |
 | Backups | `d` delete a volume · `o` restore it · `m` run a backup · `e` edit a job (schedule, storage, guests) · `tab` volumes / jobs |
 | Users | `s` show two-factor entries · `n` enroll a TOTP (QR code, then `c` for recovery codes) · `P` change the password · `x` disable them (`enter` to confirm) |

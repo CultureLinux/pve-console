@@ -5,11 +5,18 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"pvc/internal/proxmox"
 )
 
 // Update handles key presses and the results of asynchronous commands.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	next, cmd := m.route(msg)
+	if routed, ok := next.(Model); ok {
+		var read tea.Cmd
+		routed, read = routed.wantGuestNet()
+		next, cmd = routed, tea.Batch(cmd, read)
+	}
 	if _, isKey := msg.(tea.KeyMsg); isKey {
 		// Never on a key press: the key that closes a modal must not land in the next one.
 		return next, cmd
@@ -302,6 +309,17 @@ func (m Model) updateMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.openConfirm("stop-guest", "STOP GUEST", fmt.Sprintf("%d", guest.VMID), guest.VMID, fmt.Sprintf("Stop %s %d (%s) ?", strings.ToUpper(string(guest.Type)), guest.VMID, guest.Name))
 			}
 		}
+	case "A":
+		if m.viewMode == viewGuests {
+			if guest, ok := m.selectedGuest(); ok {
+				if guest.Type == proxmox.GuestTypeLXC {
+					m.message = proxmox.ErrNoAgent.Error()
+					break
+				}
+				m.message = fmt.Sprintf("reading the guest agent of %d", guest.VMID)
+				return m, m.loadAgent(guest.VMID, guest.Name)
+			}
+		}
 	case "R", "S":
 		if m.viewMode == viewGuests {
 			if guest, ok := m.selectedGuest(); ok {
@@ -526,6 +544,26 @@ func (m Model) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.applyRecovery(msg), nil
 	case passwdMsg:
 		return m.applyPasswd(msg), nil
+	case guestNetMsg:
+		m = m.handleGuestNet(msg)
+	case agentStateMsg:
+		if msg.err != nil {
+			m = m.logError(fmt.Sprintf("read the guest agent of %d", msg.vmid), msg.err)
+			break
+		}
+		m.confirmAgent(msg)
+	case agentSetMsg:
+		context := fmt.Sprintf("%s the guest agent of %d", agentVerb(msg.enable), msg.vmid)
+		if msg.err != nil {
+			m = m.logError(context, msg.err)
+			break
+		}
+		m = m.forgetGuestNet(msg.vmid)
+		m.message = fmt.Sprintf("guest agent %sd for %d: stop and start the VM to apply it", agentVerb(msg.enable), msg.vmid)
+		m = m.logDone(context, "done, applies after a full stop and start")
+		if m.showConfig && m.configVMID == msg.vmid {
+			return m, m.loadConfig(msg.vmid)
+		}
 	case disableTFAMsg:
 		if msg.err != nil {
 			m = m.logError("disable TFA of "+msg.userid, msg.err)

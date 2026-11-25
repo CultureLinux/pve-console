@@ -916,3 +916,71 @@ func TestLoadingTFAEntriesSyncsTheIndicator(t *testing.T) {
 		t.Fatalf("indicators = %v", got)
 	}
 }
+
+func TestUpdateGuestAgentFlow(t *testing.T) {
+	runner := &fakeRunner{stdout: map[string]string{"/qemu/300/config": `{"agent":"enabled=0,fstrim_cloned_disks=0,type=virtio"}`}}
+	m := newTestModel(runner)
+
+	guest, ok := m.selectedGuest()
+	if !ok || guest.VMID != 300 {
+		t.Fatalf("selected guest = %+v", guest)
+	}
+	m, cmd := press(t, m, "A")
+	if cmd == nil || runner.called("config -agent") {
+		t.Fatal("A reads the option, it changes nothing")
+	}
+	m, _ = execute(t, m, cmd)
+	if m.modalMode != modalConfirm || m.modalAction != "enable-agent" || m.modalTargetVMID != 300 {
+		t.Fatalf("mode=%q action=%q vmid=%d", m.modalMode, m.modalAction, m.modalTargetVMID)
+	}
+	if !strings.Contains(m.modalBody, "300") || !strings.Contains(m.modalBody, "must be stopped") ||
+		!strings.Contains(m.modalBody, "dnf install qemu-guest-agent") || !strings.Contains(m.modalBody, "apt install qemu-guest-agent") {
+		t.Fatalf("body = %q", m.modalBody)
+	}
+
+	// esc cancels: nothing is written.
+	m, cmd = press(t, m, "esc")
+	if cmd != nil || m.modalMode != modalNone || runner.called("config -agent") {
+		t.Fatal("esc must not change the agent")
+	}
+
+	m, cmd = press(t, m, "A")
+	m, _ = execute(t, m, cmd)
+	m, cmd = press(t, m, "enter")
+	if cmd == nil || m.modalMode != modalNone {
+		t.Fatalf("expected the set command, message=%q", m.message)
+	}
+	m, _ = execute(t, m, cmd)
+	if !runner.called("pvesh set /nodes/pve/qemu/300/config -agent enabled=1,fstrim_cloned_disks=0,type=virtio") {
+		t.Fatalf("calls = %#v", runner.calls)
+	}
+	if !strings.Contains(m.message, "guest agent enabled for 300") {
+		t.Fatalf("message = %q", m.message)
+	}
+}
+
+func TestUpdateGuestAgentOfAnEnabledVMAsksToDisable(t *testing.T) {
+	runner := &fakeRunner{stdout: map[string]string{"/qemu/300/config": `{"agent":"1"}`}}
+	m := newTestModel(runner)
+	m, cmd := press(t, m, "A")
+	m, _ = execute(t, m, cmd)
+	if m.modalAction != "disable-agent" {
+		t.Fatalf("action = %q", m.modalAction)
+	}
+}
+
+func TestUpdateGuestAgentRefusesAContainer(t *testing.T) {
+	runner := &fakeRunner{}
+	m := newTestModel(runner)
+	m, _ = press(t, m, "down", "down")
+	if guest, _ := m.selectedGuest(); guest.Type != proxmox.GuestTypeLXC {
+		t.Fatalf("selected guest = %+v", guest)
+	}
+	m, cmd := press(t, m, "A")
+	if cmd != nil || m.modalMode != modalNone || len(runner.calls) != 0 {
+		t.Fatalf("a container has no agent: calls=%v", runner.calls)
+	}
+	if !strings.Contains(m.message, "QEMU") {
+		t.Fatalf("message = %q", m.message)
+	}
+}

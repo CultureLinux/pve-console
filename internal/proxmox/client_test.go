@@ -695,3 +695,15 @@ func TestGuestStatusTakesTheLiveCPU(t *testing.T) {
 		}
 	}
 }
+
+// The uptime of the node comes from /nodes/<node>/status; without it the
+// node info is still returned.
+func TestNodeInfoReadsTheUptime(t *testing.T) {
+	runner := &command.MockRunner{Responses: map[string]command.Result{
+		"pvesh get /nodes/pve/status --output-format json": {Stdout: []byte(`{"uptime":123456}`)},
+	}}
+	info, err := Client{Runner: runner, Node: "pve"}.NodeInfo(context.Background())
+	if err != nil || info.Uptime != 123456 {
+		t.Fatalf("info=%+v err=%v", info, err)
+	}
+}

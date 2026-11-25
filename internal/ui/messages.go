@@ -43,6 +43,21 @@ type configMsg struct {
 	err    error
 }
 
+// agentStateMsg is the answer to the read of the guest agent option of a VM.
+type agentStateMsg struct {
+	vmid    int
+	name    string
+	enabled bool
+	err     error
+}
+
+// agentSetMsg is the result of turning the guest agent option on or off.
+type agentSetMsg struct {
+	vmid   int
+	enable bool
+	err    error
+}
+
 type userTFAMsg struct {
 	userid  string
 	entries []proxmox.TFAEntry

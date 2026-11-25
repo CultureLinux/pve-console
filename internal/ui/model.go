@@ -83,6 +83,8 @@ type Model struct {
 	snapshots        []proxmox.Snapshot
 	snapErr          error
 	config           proxmox.GuestConfig
+	guestNets        map[int]guestNetEntry
+	netInFlight      int
 	configErr        error
 	tfaUserID        string
 	tfaEntries       []proxmox.TFAEntry

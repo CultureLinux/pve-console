@@ -42,6 +42,7 @@ type NodeInfo struct {
 	Name           string `json:"name"`
 	ProxmoxVersion string `json:"proxmox_version"`
 	Kernel         string `json:"kernel"`
+	Uptime         int64  `json:"uptime"`
 }
 
 type Storage struct {

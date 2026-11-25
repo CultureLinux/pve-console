@@ -230,6 +230,25 @@ func (m Model) disableUserTFA(userid string) tea.Cmd {
 	}
 }
 
+// loadAgent reads whether the guest agent is enabled, to ask before toggling it.
+func (m Model) loadAgent(vmid int, name string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), readTimeout)
+		defer cancel()
+		enabled, err := m.client.GuestAgent(ctx, vmid)
+		return agentStateMsg{vmid: vmid, name: name, enabled: enabled, err: err}
+	}
+}
+
+func (m Model) setAgent(vmid int, enable bool) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), shortActionTimeout)
+		defer cancel()
+		err := m.client.SetGuestAgent(ctx, vmid, enable)
+		return agentSetMsg{vmid: vmid, enable: enable, err: err}
+	}
+}
+
 func (m Model) loadConfig(vmid int) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), readTimeout)
