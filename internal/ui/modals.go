@@ -61,28 +61,6 @@ func buttons(confirm string, kind buttonKind, confirmFocused bool, cancelFocused
 	return button(confirm, kind, confirmFocused) + "  " + button("Cancel", buttonNeutral, cancelFocused)
 }
 
-// inputModal is the confirmation shown before disabling a user's TFA.
-func (m Model) inputModal(width int) string {
-	if m.inputMode != inputDisableTFA {
-		return ""
-	}
-	user := ""
-	if selected, ok := m.selectedUserModel(); ok {
-		user = selected.UserID
-	}
-	w := modalWidth(width, 58, 40)
-	body := []string{
-		styleDanger.Render("This removes every two-factor entry of the user."),
-		"",
-		kv("User", user),
-		field("Confirm", m.input, true, max(10, w-4-10)),
-		"",
-		styleMuted.Render("Type the user id to confirm."),
-	}
-	footer := []string{hintKey(glyphEnter, "disable TFA") + "   " + hintKey("esc", "cancel")}
-	return modalFrame(modalKindDanger, "Disable two-factor", "", body, footer, w)
-}
-
 func (m Model) modal(width int) string {
 	switch m.modalMode {
 	case modalStartup:
@@ -97,6 +75,11 @@ func (m Model) modal(width int) string {
 		return m.updateModal(width)
 	case modalConfirm:
 		return m.confirmModal(width)
+	case modalPasswd:
+		return m.passwdModal(width)
+	case modalEnroll:
+		_, height := m.size()
+		return m.enrollModal(width, height)
 	}
 
 	w := modalWidth(width, 56, 40)
@@ -213,6 +196,8 @@ func confirmLabel(action string) string {
 		return "Restore backup"
 	case "dist-upgrade":
 		return "Upgrade"
+	case "disable-tfa":
+		return "Disable 2FA"
 	}
 	return "Confirm"
 }
@@ -308,6 +293,8 @@ var helpSections = []helpSection{
 	}},
 	{"USERS AND UPDATES", [][2]string{
 		{"s", "show TFA entries"},
+		{"n", "enroll a TOTP (QR code)"},
+		{"P", "change the password"},
 		{"x", "disable TFA"},
 		{"a", "refresh, confirm, upgrade"},
 	}},

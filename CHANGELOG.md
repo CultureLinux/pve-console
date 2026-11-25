@@ -2,6 +2,24 @@
 
 Notable changes of pve-console, by release. The entries are the summaries of the commits.
 
+## v0.2.1 - 2026-11-25
+
+### Features
+
+- Changement de mot de passe d'un utilisateur depuis la TUI
+- Enrôlement TOTP avec QR code depuis la vue Users
+
+### Fixes
+
+- Lit le CPU des invités dans /cluster/resources
+- Met à jour l'indicateur 2FA de la liste après une désactivation
+- Corrige le chemin d'ajout du TOTP et nomme le compte avec le nœud
+
+### User experience
+
+- Confirme la désactivation du 2FA avec enter au lieu de retaper l'identifiant
+
+
 ## v0.2.0 - 2026-11-25
 
 ### Features

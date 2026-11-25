@@ -3,6 +3,7 @@ package proxmox
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -631,5 +632,66 @@ func TestCreateSnapshotDropsVMStateWithVirtiofs(t *testing.T) {
 	}}
 	if _, err := (Client{Runner: runner, Node: "pve"}).CreateSnapshot(context.Background(), 202, "test", "", true); err != nil {
 		t.Fatalf("unexpected error: %v (calls %v)", err, runner.Calls)
+	}
+}
+
+const resourcesKey = "pvesh get /cluster/resources -type vm --output-format json"
+
+// A fresh pvesh process answers cpu 0 in the lists: the live value comes from
+// /cluster/resources, as in the web interface.
+func TestGuestsTakeTheLiveCPU(t *testing.T) {
+	runner := &command.MockRunner{Responses: map[string]command.Result{
+		"pvesh get /nodes/pve/qemu --output-format json": {Stdout: []byte(`[{"vmid":300,"name":"vm","status":"running","cpu":0,"mem":1,"maxmem":2},{"vmid":301,"name":"idle","status":"stopped","cpu":0}]`)},
+		"pvesh get /nodes/pve/lxc --output-format json":  {Stdout: []byte(`[{"vmid":400,"name":"ct","status":"running","cpu":0}]`)},
+		resourcesKey: {Stdout: []byte(`[{"id":"qemu/300","type":"qemu","vmid":300,"cpu":0.4271},{"id":"lxc/400","type":"lxc","vmid":400,"cpu":0.05},{"id":"node/pve","type":"node","cpu":0.9},{"id":"qemu/999","vmid":999,"cpu":0.7}]`)},
+	}}
+	guests, err := Client{Runner: runner, Node: "pve"}.Guests(context.Background())
+	if err != nil || len(guests) != 3 {
+		t.Fatalf("guests=%v err=%v", guests, err)
+	}
+	if guests[0].CPU != 0.4271 || guests[2].CPU != 0.05 {
+		t.Fatalf("running guests: %+v %+v", guests[0], guests[2])
+	}
+	// Not listed by pvestatd: left alone. The other fields are untouched.
+	if guests[1].CPU != 0 || guests[0].Memory != 1 || guests[0].Name != "vm" {
+		t.Fatalf("other fields changed: %+v %+v", guests[0], guests[1])
+	}
+	if len(guests) != 3 {
+		t.Fatal("the resources of other nodes or kinds must not add guests")
+	}
+}
+
+func TestGuestsKeepTheListWhenTheLiveCPUIsUnavailable(t *testing.T) {
+	for name, runner := range map[string]*command.MockRunner{
+		"refused":  {Responses: map[string]command.Result{}, Errors: map[string]error{resourcesKey: errors.New("permission denied")}},
+		"bad json": {Responses: map[string]command.Result{resourcesKey: {Stdout: []byte("nope")}}},
+	} {
+		runner.Responses["pvesh get /nodes/pve/qemu --output-format json"] = command.Result{Stdout: []byte(`[{"vmid":300,"name":"vm","status":"running","cpu":0.25}]`)}
+		runner.Responses["pvesh get /nodes/pve/lxc --output-format json"] = command.Result{Stdout: []byte(`[]`)}
+		guests, err := Client{Runner: runner, Node: "pve"}.Guests(context.Background())
+		if err != nil || len(guests) != 1 || guests[0].CPU != 0.25 {
+			t.Errorf("%s: guests=%v err=%v", name, guests, err)
+		}
+	}
+}
+
+func TestGuestStatusTakesTheLiveCPU(t *testing.T) {
+	runner := &command.MockRunner{Responses: map[string]command.Result{
+		"pvesh get /nodes/pve/qemu/300/status/current --output-format json": {Stdout: []byte(`{"name":"vm","status":"running","cpu":0,"mem":2147483648,"maxmem":4294967296}`)},
+		resourcesKey: {Stdout: []byte(`[{"type":"qemu","vmid":300,"cpu":0.31}]`)},
+	}}
+	guest, err := Client{Runner: runner, Node: "pve"}.GuestStatus(context.Background(), 300)
+	if err != nil || guest.CPU != 0.31 || guest.VMID != 300 || guest.Memory != 2<<30 {
+		t.Fatalf("guest=%+v err=%v", guest, err)
+	}
+	// An unknown guest is still an error, and asks for nothing more.
+	missing := &command.MockRunner{Errors: map[string]error{}}
+	if _, err := (Client{Runner: missing, Node: "pve"}).GuestStatus(context.Background(), 999); err == nil {
+		t.Fatal("an unknown guest must fail")
+	}
+	for _, call := range missing.Calls {
+		if call == resourcesKey {
+			t.Fatal("no live CPU is read for a guest that does not exist")
+		}
 	}
 }

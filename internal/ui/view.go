@@ -30,8 +30,6 @@ func (m Model) View() string {
 	switch {
 	case m.modalMode != modalNone:
 		return overlay(base, m.modal(width), width, height)
-	case m.inputMode == inputDisableTFA:
-		return overlay(base, m.inputModal(width), width, height)
 	case m.showConfig:
 		return overlay(base, m.configPanel(min(90, max(56, width-8)), max(12, height-6)), width, height)
 	}
@@ -355,6 +353,10 @@ func (m Model) baseHints() ([]hint, []hint) {
 		return []hint{{"enter", "confirm"}, {"esc", "cancel"}}, nil
 	case modalUpdate:
 		return m.updateHints(), nil
+	case modalEnroll:
+		return m.enrollHints(), nil
+	case modalPasswd:
+		return m.passwdHints(), nil
 	case modalUpgrade:
 		if m.upgradeRunning {
 			return []hint{{"…", "upgrade running"}}, nil
@@ -367,16 +369,13 @@ func (m Model) baseHints() ([]hint, []hint) {
 	case modalSchedule:
 		return []hint{{"↑↓", "move"}, {"space", "toggle guest"}, {"tab", "next"}, {"enter", "apply"}, {"esc", "cancel"}}, nil
 	}
-	if m.inputMode == inputDisableTFA {
-		return []hint{{"enter", "disable TFA"}, {"esc", "cancel"}}, nil
-	}
 	if m.showConfig {
 		return []hint{{"↑↓", "scroll"}, {"esc", "close"}}, nil
 	}
 
 	switch m.viewMode {
 	case viewUsers:
-		return []hint{{"↑↓", "move"}, {"s", "show TFA"}, {"x", "disable TFA"}, {"/", "search"}, {"r", "refresh"}}, tailHints
+		return []hint{{"↑↓", "move"}, {"s", "show TFA"}, {"n", "enroll TOTP"}, {"P", "password"}, {"x", "disable TFA"}, {"/", "search"}, {"r", "refresh"}}, tailHints
 	case viewUpdates:
 		// a refreshes the index first, so it is useful even when the list is empty.
 		return []hint{{"a", "upgrade"}, {"/", "search"}, {"r", "refresh"}}, tailHints

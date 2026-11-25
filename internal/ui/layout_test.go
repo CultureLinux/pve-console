@@ -138,7 +138,10 @@ func screens() []screen {
 			m.upd = updateState{phase: updateKnown, err: update.ErrDisabled}
 		}},
 		{"modal upgrade error", func(m *Model) { m.modalMode, m.upgradeErr = modalUpgrade, fmt.Errorf("apt failed") }},
-		{"modal tfa", func(m *Model) { m.viewMode, m.inputMode, m.input = viewUsers, inputDisableTFA, "root" }},
+		{"modal tfa", func(m *Model) {
+			m.viewMode = viewUsers
+			m.openConfirm("disable-tfa", "DISABLE TWO-FACTOR", "root@pam", 0, "Remove every two-factor entry of root@pam ?")
+		}},
 		{"errors", func(m *Model) { fillErrors(m); m.viewMode = viewLog }},
 		{"errors filtered", func(m *Model) {
 			fillErrors(m)

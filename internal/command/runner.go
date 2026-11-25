@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -204,4 +205,46 @@ func (w *lineWriter) tail(n int) []byte {
 		lines = lines[len(lines)-n:]
 	}
 	return []byte(strings.Join(lines, "\n"))
+}
+
+// redacted is what replaces a secret in an error.
+const redacted = "***"
+
+// RedactArgs hides the secrets of a failed command: the value that follows each
+// of flags is replaced in the arguments, and wherever the error output repeats
+// it. Errors that are not command errors are returned as they are. The error
+// ends up in the log, which must never hold a password or a secret.
+func RedactArgs(err error, flags ...string) error {
+	var failed CommandError
+	if err == nil || !errors.As(err, &failed) {
+		return err
+	}
+	args := slices.Clone(failed.Result.Args)
+	var secrets []string
+	for i := 0; i+1 < len(args); i++ {
+		if slices.Contains(flags, args[i]) {
+			if args[i+1] != "" {
+				secrets = append(secrets, args[i+1])
+			}
+			args[i+1] = redacted
+			i++
+		}
+	}
+	failed.Result.Args = args
+	failed.Result.Stderr = replaceAll(failed.Result.Stderr, secrets)
+	failed.Result.Stdout = replaceAll(failed.Result.Stdout, secrets)
+
+	return failed
+}
+
+func replaceAll(output []byte, secrets []string) []byte {
+	text := string(output)
+	for _, secret := range secrets {
+		text = strings.ReplaceAll(text, secret, redacted)
+	}
+	if text == string(output) {
+		return output
+	}
+
+	return []byte(text)
 }

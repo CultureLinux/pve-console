@@ -50,6 +50,12 @@ func (m Model) updateModalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.modalMode == modalUpdate {
 		return m.handleUpdateKey(msg)
 	}
+	if m.modalMode == modalEnroll {
+		return m.handleEnrollKey(msg)
+	}
+	if m.modalMode == modalPasswd {
+		return m.handlePasswdKey(msg)
+	}
 	if m.modalMode == modalUpgrade {
 		switch msg.String() {
 		case "esc", "enter":
@@ -158,6 +164,10 @@ func (m Model) updateMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.openModal(modalHelp, 0, "", "")
 	case "U":
 		return m.openUpdate()
+	case "P":
+		if m.viewMode == viewUsers {
+			return m.startPasswd(), nil
+		}
 	case "q", "ctrl+c":
 		return m, tea.Quit
 	case "esc":
@@ -324,7 +334,7 @@ func (m Model) updateMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "n":
 		if m.viewMode == viewUsers {
-			return m, nil
+			return m.startEnroll()
 		}
 		guest, ok := m.selectedGuest()
 		if ok {
@@ -382,9 +392,7 @@ func (m Model) updateMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.viewMode == viewUsers {
 			user, ok := m.selectedUserModel()
 			if ok {
-				m.inputMode = inputDisableTFA
-				m.input = ""
-				m.message = fmt.Sprintf("type %s to disable TFA", user.UserID)
+				m.openConfirm("disable-tfa", "DISABLE TWO-FACTOR", user.UserID, 0, fmt.Sprintf("Remove every two-factor entry of %s ?", user.UserID))
 			}
 		}
 	}
@@ -484,6 +492,10 @@ func (m Model) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 	case userTFAMsg:
+		if msg.err == nil {
+			// What Proxmox says is the truth: the list follows it.
+			m = m.withTFA(msg.userid, len(msg.entries) > 0)
+		}
 		if msg.userid == m.tfaUserID {
 			m.tfaEntries = msg.entries
 			m.tfaErr = msg.err
@@ -493,13 +505,20 @@ func (m Model) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.message = fmt.Sprintf("%d TFA entries for %s", len(msg.entries), msg.userid)
 			}
 		}
+	case enrollMsg:
+		return m.applyEnroll(msg)
+	case recoveryMsg:
+		return m.applyRecovery(msg), nil
+	case passwdMsg:
+		return m.applyPasswd(msg), nil
 	case disableTFAMsg:
 		if msg.err != nil {
 			m = m.logError("disable TFA of "+msg.userid, msg.err)
 		} else {
 			m.message = fmt.Sprintf("TFA disabled for %s", msg.userid)
 			m = m.logDone("disable TFA of "+msg.userid, "done")
-			m.tfaUserID = msg.userid
+			m = m.withTFA(msg.userid, false)
+			m.tfaUserID, m.tfaEntries, m.tfaErr = msg.userid, nil, nil
 			return m, m.loadUserTFA(msg.userid)
 		}
 	case usersMsg:

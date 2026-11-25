@@ -79,6 +79,9 @@ func (m Model) handleConfirmSubmit() (tea.Model, tea.Cmd) {
 		return m, m.shutdownGuest(vmid)
 	case "dist-upgrade":
 		return m.startConfirmedUpgrade()
+	case "disable-tfa":
+		m.message = fmt.Sprintf("disabling TFA for %s", name)
+		return m, m.disableUserTFA(name)
 	}
 	return m, nil
 }
@@ -205,21 +208,9 @@ func (m Model) handleInputSubmit() (tea.Model, tea.Cmd) {
 	m.inputMode = inputNone
 	m.input = ""
 
-	switch mode {
-	case inputSearch:
+	if mode == inputSearch {
 		m.query = input
 		m.resetActiveSelection()
-	case inputDisableTFA:
-		user, ok := m.selectedUserModel()
-		if !ok {
-			return m, nil
-		}
-		if input != user.UserID {
-			m = m.logConsole("invalid input", "disable TFA of "+user.UserID, "confirmation mismatch")
-			return m, nil
-		}
-		m.message = fmt.Sprintf("disabling TFA for %s", user.UserID)
-		return m, m.disableUserTFA(user.UserID)
 	}
 
 	return m, nil

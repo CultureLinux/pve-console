@@ -149,7 +149,7 @@ func (m *Model) toggleView() {
 		return
 	}
 	m.viewMode = viewUsers
-	m.message = "users view: s load TFA, x disable TFA"
+	m.message = "users view: s load TFA, n enroll TOTP, P password, x disable TFA"
 }
 
 func (m *Model) moveSelection(delta int) {

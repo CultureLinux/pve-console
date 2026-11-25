@@ -48,13 +48,16 @@ type demoRunner struct {
 	upgraded bool
 	// failing lists the tasks that end in error (a backup of guest 103).
 	failing map[string]bool
+	// enrolled lists the factors added during the demo, by user.
+	enrolled map[string][]map[string]any
 }
 
 func newDemoRunner() *demoRunner {
 	const gib = 1 << 30
 	return &demoRunner{
-		polls:   map[string]int{},
-		failing: map[string]bool{},
+		polls:    map[string]int{},
+		failing:  map[string]bool{},
+		enrolled: map[string][]map[string]any{},
 		guests: []*demoGuest{
 			{VMID: 100, Name: "wordpress", Status: "running", CPU: 0.12, Memory: 1 * gib, MaxMem: 4 * gib, Uptime: 3*86400 + 7200},
 			{VMID: 101, Name: "postgres-primary", Status: "running", CPU: 0.61, Memory: 6 * gib, MaxMem: 8 * gib, Uptime: 12*86400 + 3600},
@@ -193,6 +196,9 @@ func (r *demoRunner) pvesh(args []string) (command.Result, error) {
 	case "delete":
 		return r.upid("demo", ""), nil
 	case "set":
+		if path == "/access/password" && (option(args, "-userid") == "" || option(args, "-password") == "") {
+			return command.Result{}, demoRefusal("pvesh", args, "400 Parameter verification failed.\npassword: property is missing and it is not optional")
+		}
 		return command.Result{}, nil
 	}
 	return command.Result{}, demoFail("pvesh", args)
@@ -208,6 +214,16 @@ func (r *demoRunner) get(path string, parts []string, args []string) (command.Re
 			}
 		}
 		return demoJSON(list)
+	case path == "/cluster/resources":
+		resources := []map[string]any{}
+		for _, guest := range r.guests {
+			kind := "qemu"
+			if guest.lxc {
+				kind = "lxc"
+			}
+			resources = append(resources, map[string]any{"id": fmt.Sprintf("%s/%d", kind, guest.VMID), "type": kind, "vmid": guest.VMID, "node": "pve", "cpu": guest.CPU})
+		}
+		return demoJSON(resources)
 	case path == "/nodes/pve/storage":
 		return demoJSON([]map[string]any{
 			{"storage": "local", "type": "dir", "used": 21 << 30, "total": 94 << 30, "enabled": 1, "active": 1},
@@ -235,10 +251,11 @@ func (r *demoRunner) get(path string, parts []string, args []string) (command.Re
 			{"userid": "backup@pve", "enable": 0, "comment": "service account"},
 		})
 	case len(parts) == 4 && parts[0] == "access" && parts[2] != "" && parts[3] == "tfa":
+		entries := []map[string]any{}
 		if parts[2] == "root@pam" {
-			return demoJSON([]map[string]any{{"id": "1", "type": "totp", "description": "phone", "created": 1700000000}})
+			entries = append(entries, map[string]any{"id": "1", "type": "totp", "description": "phone", "created": 1700000000})
 		}
-		return demoJSON([]map[string]any{})
+		return demoJSON(append(entries, r.enrolled[parts[2]]...))
 	case len(parts) == 5 && parts[2] == "storage" && parts[4] == "content":
 		if parts[3] != "backup-nas" {
 			return demoJSON([]map[string]any{})
@@ -335,6 +352,11 @@ func option(args []string, name string) string {
 func (r *demoRunner) create(path string, parts []string, args []string) (command.Result, error) {
 	full := append([]string{"create"}, args[1:]...)
 	switch {
+	case path == "/access/tfa":
+		// What the real pvesh says: the user belongs in the path.
+		return command.Result{}, demoRefusal("pvesh", full, "No 'create' handler defined for '/access/tfa'")
+	case len(parts) == 3 && parts[0] == "access" && parts[1] == "tfa":
+		return r.createTFA(parts[2], args, full)
 	case path == "/nodes/pve/vzdump":
 		result := r.upid("vzdump", option(args, "-vmid"))
 		if option(args, "-vmid") == "103" {
@@ -368,6 +390,32 @@ func (r *demoRunner) create(path string, parts []string, args []string) (command
 		return r.upid("qm"+parts[5], parts[3]), nil
 	}
 	return r.upid("demo", ""), nil
+}
+
+// createTFA adds a factor to a user of the demo. Any 6-digit code is good,
+// except 000000, so that the refusal can be shown too.
+func (r *demoRunner) createTFA(userid string, args []string, full []string) (command.Result, error) {
+	switch option(args, "-type") {
+	case "totp":
+		if option(args, "-value") == "000000" {
+			return command.Result{}, demoRefusal("pvesh", full, "400 Parameter verification failed.\nvalue: invalid totp token")
+		}
+		id := fmt.Sprintf("%d", 10+len(r.enrolled[userid]))
+		r.enrolled[userid] = append(r.enrolled[userid], map[string]any{"id": id, "type": "totp", "description": option(args, "-description"), "created": time.Now().Unix()})
+		return demoJSON(map[string]any{"id": id})
+	case "recovery":
+		for _, entry := range r.enrolled[userid] {
+			if entry["type"] == "recovery" {
+				return command.Result{}, demoRefusal("pvesh", full, "400 Parameter verification failed.\ntype: a recovery entry already exists")
+			}
+		}
+		r.enrolled[userid] = append(r.enrolled[userid], map[string]any{"id": "20", "type": "recovery", "description": option(args, "-description"), "created": time.Now().Unix()})
+		return demoJSON(map[string]any{"id": "20", "recovery": []string{
+			"7f3k-2m9q", "a8d4-n5xw", "p2c6-h7vz", "t9b1-j4re", "y3g8-s6ku",
+			"m5q2-d7ca", "w4n9-f1xh", "e6v3-b8tj", "k1r7-z2py", "c8h5-u9ld",
+		}})
+	}
+	return command.Result{}, demoFail("pvesh", full)
 }
 
 // demoStepDelay is the pause between the steps of the demo update.

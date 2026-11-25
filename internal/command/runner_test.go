@@ -3,6 +3,7 @@ package command
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os/exec"
 	"strings"
 	"testing"
@@ -114,4 +115,60 @@ func TestRunLinesStopsOnTimeout(t *testing.T) {
 
 func TestExecRunnerIsALineRunner(t *testing.T) {
 	var _ LineRunner = ExecRunner{}
+}
+
+func TestRedactArgs(t *testing.T) {
+	t.Parallel()
+	failed := CommandError{
+		Result: Result{
+			Command: "pvesh",
+			Args:    []string{"set", "/access/password", "-userid", "alice@pve", "-password", "hunter2hunter2"},
+			Stderr:  []byte("400 Parameter verification failed.\npassword: value 'hunter2hunter2' is not allowed"),
+			Stdout:  []byte("hunter2hunter2"),
+		},
+		Err: errors.New("exit status 255"),
+	}
+
+	got := RedactArgs(fmt.Errorf("wrapped: %w", failed), "-password")
+	var redacted CommandError
+	if !errors.As(got, &redacted) {
+		t.Fatalf("err = %T", got)
+	}
+	line := Key(redacted.Result.Command, redacted.Result.Args...)
+	if line != "pvesh set /access/password -userid alice@pve -password ***" {
+		t.Fatalf("line = %q", line)
+	}
+	for _, text := range []string{redacted.Error(), string(redacted.Result.Stderr), string(redacted.Result.Stdout), fmt.Sprint(redacted.Result.Args)} {
+		if strings.Contains(text, "hunter2") {
+			t.Fatalf("secret left in %q", text)
+		}
+	}
+	if !errors.Is(got, failed.Err) {
+		t.Fatal("the cause must stay reachable")
+	}
+	if failed.Result.Args[5] != "hunter2hunter2" {
+		t.Fatal("the original error must not change")
+	}
+}
+
+func TestRedactArgsLeavesTheRest(t *testing.T) {
+	t.Parallel()
+	if RedactArgs(nil, "-password") != nil {
+		t.Fatal("nil stays nil")
+	}
+	plain := errors.New("boom")
+	if got := RedactArgs(plain, "-password"); got != plain {
+		t.Fatalf("got %v", got)
+	}
+	failed := CommandError{Result: Result{Command: "pvesh", Args: []string{"get", "/x", "-password"}, Stderr: []byte("boom")}}
+	got := RedactArgs(failed, "-password")
+	var again CommandError
+	if !errors.As(got, &again) || len(again.Result.Args) != 3 || again.Result.Args[2] != "-password" || string(again.Result.Stderr) != "boom" {
+		t.Fatalf("a flag without a value changes nothing: %+v", again.Result)
+	}
+	empty := CommandError{Result: Result{Args: []string{"-value", "", "x"}, Stderr: []byte("abc")}}
+	var out CommandError
+	if !errors.As(RedactArgs(empty, "-value"), &out) || string(out.Result.Stderr) != "abc" {
+		t.Fatal("an empty value must not blank the output")
+	}
 }

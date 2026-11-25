@@ -75,7 +75,7 @@ The UI needs a UTF-8 terminal of at least 60×14. `?` shows every key.
 - **Guests**: start, stop, clean shutdown and clean reboot, with usage bars colored by level. Actions that start a Proxmox task are followed: the header counts the running tasks, shows `OK` or `FAILED` when each ends, and reloads the data.
 - **Snapshots**: list, create, delete and roll back. A QEMU snapshot keeps the RAM state, unless the VM cannot save it (virtiofs).
 - **Backups**: browse volumes (guest, date, size), run a backup, restore or delete a volume, and edit the schedule, storage and guests of a job. A restore overwrites the guest with that VMID and needs it stopped.
-- **Users**: list users, show their two-factor entries, and disable them after typing the user id.
+- **Users**: list users, show their two-factor entries, enroll a TOTP (QR code drawn in the terminal, code checked by Proxmox, then recovery codes), change a password (`pve` and `pam` realms), and disable the entries after a confirmation.
 
 ### A guided package upgrade
 
@@ -208,7 +208,7 @@ Exit codes: `0` OK or INFO only · `1` WARN · `2` FAIL · `3` internal error. T
 | Guests | `+` start · `-` stop (forced) · `S` clean shutdown · `R` clean reboot · `m` run a backup · `enter` configuration (`↑` `↓` scroll, `esc` closes) · `s` snapshots · `n` new snapshot |
 | Snapshots | `↑` `↓` select · `d` delete · `o` roll back · `n` new |
 | Backups | `d` delete a volume · `o` restore it · `m` run a backup · `e` edit a job (schedule, storage, guests) · `tab` volumes / jobs |
-| Users | `s` show two-factor entries · `x` disable them (type the user id) |
+| Users | `s` show two-factor entries · `n` enroll a TOTP (QR code, then `c` for recovery codes) · `P` change the password · `x` disable them (`enter` to confirm) |
 | Updates | `a` guided upgrade · `r` refresh |
 | Log | `tab` source · `f` outcome (all, errors, success) · `/` search · `x` clear |
 

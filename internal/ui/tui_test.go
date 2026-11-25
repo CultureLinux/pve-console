@@ -118,16 +118,18 @@ func TestDisableTFAConfirmationIsADangerModal(t *testing.T) {
 	model.modalMode = modalNone
 	model.viewMode = viewUsers
 	model.data.users = []proxmox.User{{UserID: "root@pam"}}
-	model.inputMode = inputDisableTFA
-	model.input = "root@pam"
+	model, _ = press(t, model, "x")
 
-	view := model.inputModal(80)
-	for _, want := range []string{"Disable two-factor", "root@pam", "Type the user id to confirm", "disable TFA"} {
+	view := model.modal(80)
+	for _, want := range []string{"Disable two-factor", "root@pam", "This cannot be undone", "Disable 2FA", "esc Cancel"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("expected %q in the TFA confirmation, got %q", want, view)
 		}
 	}
-	if got := model.footerText(); !strings.Contains(got, "disable TFA") || !strings.Contains(got, "esc cancel") {
+	if strings.Contains(view, "Type the user id") {
+		t.Fatalf("nothing must be typed to confirm: %q", view)
+	}
+	if got := model.footerText(); !strings.Contains(got, "enter confirm") || !strings.Contains(got, "esc cancel") {
 		t.Fatalf("unexpected footer: %q", got)
 	}
 }

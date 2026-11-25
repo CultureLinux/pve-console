@@ -69,7 +69,10 @@ func (c Client) Guests(ctx context.Context) ([]Guest, error) {
 		return nil, err
 	}
 
-	return append(qemu, lxc...), nil
+	guests := append(qemu, lxc...)
+	c.applyLiveCPU(ctx, guests)
+
+	return guests, nil
 }
 
 func (c Client) GuestStatus(ctx context.Context, vmid int) (Guest, error) {
@@ -77,9 +80,53 @@ func (c Client) GuestStatus(ctx context.Context, vmid int) (Guest, error) {
 	if err != nil {
 		return Guest{}, err
 	}
-	return byGuestType(guestNotFound(vmid), func(typ GuestType) (Guest, error) {
+	guest, err := byGuestType(guestNotFound(vmid), func(typ GuestType) (Guest, error) {
 		return c.guestStatusByType(ctx, node, vmid, typ)
 	})
+	if err != nil {
+		return guest, err
+	}
+	one := []Guest{guest}
+	c.applyLiveCPU(ctx, one)
+
+	return one[0], nil
+}
+
+// liveCPU reads the CPU usage of every guest from /cluster/resources: the values
+// pvestatd keeps up to date, which are the ones of the web interface. The lists
+// of a fresh pvesh process always say 0: Proxmox works the CPU out from the
+// previous sample, which only a long-lived process has.
+func (c Client) liveCPU(ctx context.Context) (map[int]float64, error) {
+	var resources []struct {
+		VMID *int    `json:"vmid"`
+		CPU  float64 `json:"cpu"`
+	}
+	if err := c.pveshJSON(ctx, &resources, "get", "/cluster/resources", "-type", "vm", "--output-format", "json"); err != nil {
+		return nil, fmt.Errorf("unable to read the CPU usage of the guests: %w", err)
+	}
+	usage := make(map[int]float64, len(resources))
+	for _, resource := range resources {
+		if resource.VMID != nil {
+			usage[*resource.VMID] = resource.CPU
+		}
+	}
+
+	return usage, nil
+}
+
+// applyLiveCPU replaces the CPU usage of the guests with the live one. It is
+// best effort: if /cluster/resources cannot be read, the guests are kept as
+// they are (CPU at 0) rather than failing the whole list for a secondary figure.
+func (c Client) applyLiveCPU(ctx context.Context, guests []Guest) {
+	usage, err := c.liveCPU(ctx)
+	if err != nil {
+		return
+	}
+	for i := range guests {
+		if cpu, ok := usage[guests[i].VMID]; ok {
+			guests[i].CPU = cpu
+		}
+	}
 }
 
 func (c Client) GuestConfig(ctx context.Context, vmid int) (GuestConfig, error) {

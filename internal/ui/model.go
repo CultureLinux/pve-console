@@ -25,23 +25,24 @@ type inputMode string
 type modalMode string
 
 const (
-	inputNone       inputMode = ""
-	inputSearch     inputMode = "search"
-	inputDisableTFA inputMode = "disable-tfa"
-	modalNone       modalMode = ""
-	modalSnapshot   modalMode = "snapshot"
-	modalBackup     modalMode = "backup"
-	modalSchedule   modalMode = "schedule"
-	modalHelp       modalMode = "help"
-	modalStartup    modalMode = "startup"
-	modalUpgrade    modalMode = "upgrade"
-	modalUpdate     modalMode = "update"
-	modalConfirm    modalMode = "confirm"
-	viewGuests      string    = "guests"
-	viewUsers       string    = "users"
-	viewLog         string    = "log"
-	viewUpdates     string    = "updates"
-	viewBackups     string    = "backups"
+	inputNone     inputMode = ""
+	inputSearch   inputMode = "search"
+	modalNone     modalMode = ""
+	modalSnapshot modalMode = "snapshot"
+	modalBackup   modalMode = "backup"
+	modalSchedule modalMode = "schedule"
+	modalHelp     modalMode = "help"
+	modalStartup  modalMode = "startup"
+	modalUpgrade  modalMode = "upgrade"
+	modalUpdate   modalMode = "update"
+	modalConfirm  modalMode = "confirm"
+	modalEnroll   modalMode = "enroll"
+	modalPasswd   modalMode = "passwd"
+	viewGuests    string    = "guests"
+	viewUsers     string    = "users"
+	viewLog       string    = "log"
+	viewUpdates   string    = "updates"
+	viewBackups   string    = "backups"
 )
 
 // Model is the Bubble Tea model of the interactive terminal UI.
@@ -86,6 +87,8 @@ type Model struct {
 	tfaUserID        string
 	tfaEntries       []proxmox.TFAEntry
 	tfaErr           error
+	enroll           enrollState
+	passwd           passwdState
 	upgradeRunning   bool
 	upgradeOutput    string
 	upgradeErr       error

@@ -668,7 +668,7 @@ func TestUpdateDisableTFAFlow(t *testing.T) {
 	runner := &fakeRunner{stdout: map[string]string{"tfa list": `[]`}}
 	m := newTestModel(runner)
 	m.viewMode = viewUsers
-	m.data.users = []proxmox.User{{UserID: "root@pam"}, {UserID: "bob@pve"}}
+	m.data.users = []proxmox.User{{UserID: "root@pam", TFAEnabled: true}, {UserID: "bob@pve", TFAEnabled: true}}
 
 	m, cmd := press(t, m, "s")
 	if m.tfaUserID != "root@pam" || cmd == nil {
@@ -676,24 +676,27 @@ func TestUpdateDisableTFAFlow(t *testing.T) {
 	}
 	m, _ = execute(t, m, cmd)
 
+	// esc cancels: nothing is disabled.
+	m, cmd = press(t, m, "x")
+	if m.modalMode != modalConfirm || m.modalAction != "disable-tfa" || m.modalInput != "root@pam" || cmd != nil {
+		t.Fatalf("mode=%q action=%q target=%q", m.modalMode, m.modalAction, m.modalInput)
+	}
+	if !strings.Contains(m.modalBody, "root@pam") {
+		t.Fatalf("the question must name the user: %q", m.modalBody)
+	}
+	m, cmd = press(t, m, "esc")
+	if cmd != nil || m.modalMode != modalNone || runner.called("tfa delete") {
+		t.Fatal("esc must not disable TFA")
+	}
+	// Any other key leaves the modal open and does nothing either.
 	m, _ = press(t, m, "x")
-	if m.inputMode != inputDisableTFA {
-		t.Fatalf("mode=%q", m.inputMode)
-	}
-	m, cmd = press(t, m, "n", "o", "enter")
-	if cmd != nil || m.message != "confirmation mismatch" {
-		t.Fatalf("message=%q cmd=%t", m.message, cmd != nil)
-	}
-	if runner.called("tfa delete") {
-		t.Fatal("a mismatch must not disable TFA")
+	m, cmd = press(t, m, "y", "o", "tab")
+	if cmd != nil || m.modalMode != modalConfirm || runner.called("tfa delete") {
+		t.Fatal("only enter confirms")
 	}
 
-	m, _ = press(t, m, "x")
-	for _, r := range "root@pam" {
-		m, _ = press(t, m, string(r))
-	}
 	m, cmd = press(t, m, "enter")
-	if cmd == nil {
+	if cmd == nil || m.modalMode != modalNone {
 		t.Fatalf("expected disable command, message=%q", m.message)
 	}
 	m, next := execute(t, m, cmd)
@@ -702,6 +705,13 @@ func TestUpdateDisableTFAFlow(t *testing.T) {
 	}
 	if next == nil || !strings.Contains(m.message, "TFA disabled for root@pam") {
 		t.Fatalf("message=%q", m.message)
+	}
+	// The list shows it at once, without a refresh, and only for that user.
+	if m.data.users[0].TFAEnabled || !m.data.users[1].TFAEnabled {
+		t.Fatalf("users = %+v", m.data.users)
+	}
+	if len(m.tfaEntries) != 0 {
+		t.Fatalf("stale entries = %v", m.tfaEntries)
 	}
 }
 
@@ -889,5 +899,20 @@ func TestHelpAndFooterMentionRebootAndShutdown(t *testing.T) {
 	m, _ = press(t, m, "k") // 300 is stopped
 	if footer := m.footerText(); !strings.Contains(footer, "+ start") || strings.Contains(footer, "R reboot") {
 		t.Errorf("a stopped guest only offers start: %q", footer)
+	}
+}
+
+func TestLoadingTFAEntriesSyncsTheIndicator(t *testing.T) {
+	m := newTestModel(&fakeRunner{})
+	m.viewMode = viewUsers
+	m.data.users = []proxmox.User{{UserID: "a@pve"}, {UserID: "b@pve", TFAEnabled: true}, {UserID: "c@pve", TFAEnabled: true}}
+
+	m, _ = deliver(t, m, userTFAMsg{userid: "a@pve", entries: []proxmox.TFAEntry{{ID: "1", Type: "totp"}}})
+	m, _ = deliver(t, m, userTFAMsg{userid: "b@pve", entries: nil})
+	// A failed read says nothing: the indicator stays.
+	m, _ = deliver(t, m, userTFAMsg{userid: "c@pve", err: errors.New("boom")})
+	got := []bool{m.data.users[0].TFAEnabled, m.data.users[1].TFAEnabled, m.data.users[2].TFAEnabled}
+	if got[0] != true || got[1] != false || got[2] != true {
+		t.Fatalf("indicators = %v", got)
 	}
 }

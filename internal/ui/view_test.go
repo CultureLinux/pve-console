@@ -297,10 +297,6 @@ func TestSearchPromptReplacesTheHints(t *testing.T) {
 	if strings.Contains(row, "q quit") || textWidth(row) != 100 {
 		t.Fatalf("the prompt takes the whole row: %q", row)
 	}
-	// The search is inline: it must not open a modal.
-	if m.inputModal(100) != "" {
-		t.Fatal("search must not be a modal")
-	}
 	m.width, m.height = 120, 34
 	if strings.Contains(stripANSI(m.View()), "Disable two-factor") {
 		t.Fatal("unexpected modal")
