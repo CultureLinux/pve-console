@@ -1,3 +1,6 @@
+.agents
+.claude
+CLAUDE.md
 .gocache/
 .gomodcache/
 bin/

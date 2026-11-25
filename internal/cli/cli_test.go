@@ -2,8 +2,10 @@ package cli
 
 import (
 	"bytes"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"pvc/internal/command"
 	"pvc/internal/proxmox"
@@ -213,8 +215,77 @@ func testClient() proxmox.Client {
 			"pvesh get /nodes/pve/storage --output-format json":                                              {Stdout: []byte(`[{"storage":"local","type":"dir","used":85,"total":100,"enabled":true,"active":true}]`)},
 			"pvesh get /nodes/pve/qemu/300/snapshot --output-format json":                                    {Stdout: []byte(`[{"name":"before-upgrade","description":"Before upgrade"}]`)},
 			"pvesh create /nodes/pve/qemu/300/snapshot -snapname before-upgrade -description Before upgrade": {},
+			"cat /proc/mdstat": {},
 		},
+		Missing: []string{"smartctl", "zpool", "lvs", "vgs"},
 	}
 
 	return proxmox.Client{Runner: runner, Node: "pve"}
+}
+
+func TestParseGlobalOptionsTimeout(t *testing.T) {
+	tests := []struct {
+		name    string
+		args    []string
+		want    time.Duration
+		set     bool
+		wantErr bool
+		rest    int
+	}{
+		{"default", []string{"status"}, 30 * time.Second, false, false, 1},
+		{"separate value", []string{"--timeout", "90s", "status"}, 90 * time.Second, true, false, 1},
+		{"equals value", []string{"--timeout=5m", "status"}, 5 * time.Minute, true, false, 1},
+		{"missing value", []string{"--timeout"}, 0, false, true, 0},
+		{"invalid", []string{"--timeout", "abc", "status"}, 0, false, true, 0},
+		{"zero", []string{"--timeout=0s", "status"}, 0, false, true, 0},
+		{"negative", []string{"--timeout=-5s", "status"}, 0, false, true, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opts, rest, err := ParseGlobalOptions(tt.args)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("error = %v, wantErr %t", err, tt.wantErr)
+			}
+			if tt.wantErr {
+				return
+			}
+			if opts.Timeout != tt.want || opts.TimeoutSet != tt.set || len(rest) != tt.rest {
+				t.Fatalf("got timeout=%s set=%t rest=%v", opts.Timeout, opts.TimeoutSet, rest)
+			}
+		})
+	}
+}
+
+func TestRunInvalidTimeoutReturnsUsageError(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := Run([]string{"--timeout", "nope", "status"}, &stdout, &stderr); code != 2 {
+		t.Fatalf("expected exit code 2, got %d", code)
+	}
+	if !strings.Contains(stderr.String(), "invalid --timeout") {
+		t.Fatalf("unexpected stderr %q", stderr.String())
+	}
+}
+
+func TestInitConfigFailureIsNotFatal(t *testing.T) {
+	t.Setenv("HOME", filepath.Join(t.TempDir(), "missing", "home"))
+	var stderr bytes.Buffer
+
+	if created := initConfig(&stderr); created {
+		t.Fatal("expected created=false on failure")
+	}
+	if !strings.Contains(stderr.String(), "warning") {
+		t.Fatalf("expected warning, got %q", stderr.String())
+	}
+}
+
+func TestInitConfigCreatesFile(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	var stderr bytes.Buffer
+
+	if created := initConfig(&stderr); !created {
+		t.Fatalf("expected created=true, stderr %q", stderr.String())
+	}
+	if created := initConfig(&stderr); created {
+		t.Fatal("expected created=false on second call")
+	}
 }

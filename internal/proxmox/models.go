@@ -1,5 +1,7 @@
 package proxmox
 
+import "encoding/json"
+
 type GuestType string
 
 const (
@@ -16,6 +18,24 @@ type Guest struct {
 	Memory uint64    `json:"memory"`
 	MaxMem uint64    `json:"maxmem"`
 	Uptime int64     `json:"uptime"`
+}
+
+// UnmarshalJSON reads a guest from the Proxmox API, which reports the memory in
+// use as "mem". The "memory" key (what this tool prints with --json) is read
+// too, so both forms round-trip.
+func (g *Guest) UnmarshalJSON(data []byte) error {
+	type plain Guest
+	aux := struct {
+		*plain
+		Mem *uint64 `json:"mem"`
+	}{plain: (*plain)(g)}
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	if aux.Mem != nil {
+		g.Memory = *aux.Mem
+	}
+	return nil
 }
 
 type NodeInfo struct {
@@ -82,7 +102,9 @@ type BackupVolume struct {
 	VolID  string `json:"volid"`
 	VMID   int    `json:"vmid,omitempty"`
 	Format string `json:"format,omitempty"`
-	Size   uint64 `json:"size,omitempty"`
-	CTime  int64  `json:"ctime,omitempty"`
-	Notes  string `json:"notes,omitempty"`
+	// Subtype is "qemu" or "lxc" when Proxmox reports it.
+	Subtype string `json:"subtype,omitempty"`
+	Size    uint64 `json:"size,omitempty"`
+	CTime   int64  `json:"ctime,omitempty"`
+	Notes   string `json:"notes,omitempty"`
 }

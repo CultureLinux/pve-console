@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"pvc/internal/command"
+	"pvc/internal/validate"
 )
 
 type Client struct {
@@ -76,16 +77,9 @@ func (c Client) GuestStatus(ctx context.Context, vmid int) (Guest, error) {
 	if err != nil {
 		return Guest{}, err
 	}
-
-	if guest, err := c.guestStatusByType(ctx, node, vmid, GuestTypeQEMU); err == nil {
-		return guest, nil
-	}
-
-	if guest, err := c.guestStatusByType(ctx, node, vmid, GuestTypeLXC); err == nil {
-		return guest, nil
-	}
-
-	return Guest{}, fmt.Errorf("guest %d was not found as QEMU VM or LXC container", vmid)
+	return byGuestType(guestNotFound(vmid), func(typ GuestType) (Guest, error) {
+		return c.guestStatusByType(ctx, node, vmid, typ)
+	})
 }
 
 func (c Client) GuestConfig(ctx context.Context, vmid int) (GuestConfig, error) {
@@ -93,16 +87,9 @@ func (c Client) GuestConfig(ctx context.Context, vmid int) (GuestConfig, error) 
 	if err != nil {
 		return nil, err
 	}
-
-	if config, err := c.guestConfigByType(ctx, node, vmid, GuestTypeQEMU); err == nil {
-		return config, nil
-	}
-
-	if config, err := c.guestConfigByType(ctx, node, vmid, GuestTypeLXC); err == nil {
-		return config, nil
-	}
-
-	return nil, fmt.Errorf("guest %d was not found as QEMU VM or LXC container", vmid)
+	return byGuestType(guestNotFound(vmid), func(typ GuestType) (GuestConfig, error) {
+		return c.guestConfigByType(ctx, node, vmid, typ)
+	})
 }
 
 func (c Client) Storages(ctx context.Context) ([]Storage, error) {
@@ -125,73 +112,94 @@ func (c Client) Storages(ctx context.Context) ([]Storage, error) {
 	return storages, nil
 }
 
-func (c Client) StartGuest(ctx context.Context, vmid int) error {
+// StartGuest starts a guest and returns the UPID of the task, if Proxmox created one.
+func (c Client) StartGuest(ctx context.Context, vmid int) (string, error) {
 	return c.guestPowerAction(ctx, vmid, "start")
 }
 
-func (c Client) StopGuest(ctx context.Context, vmid int) error {
+// StopGuest stops a guest immediately and returns the UPID of the task, if any.
+func (c Client) StopGuest(ctx context.Context, vmid int) (string, error) {
 	return c.guestPowerAction(ctx, vmid, "stop")
+}
+
+// RebootGuest asks a running guest to reboot cleanly and returns the UPID of the task, if any.
+func (c Client) RebootGuest(ctx context.Context, vmid int) (string, error) {
+	return c.guestPowerAction(ctx, vmid, "reboot")
+}
+
+// ShutdownGuest asks a running guest to shut down cleanly (ACPI for a VM) and
+// returns the UPID of the task, if any. Unlike StopGuest it does not power the
+// guest off by force.
+func (c Client) ShutdownGuest(ctx context.Context, vmid int) (string, error) {
+	return c.guestPowerAction(ctx, vmid, "shutdown")
 }
 func (c Client) Snapshots(ctx context.Context, vmid int) ([]Snapshot, error) {
 	node, err := c.nodeName()
 	if err != nil {
 		return nil, err
 	}
-
-	if snapshots, err := c.snapshotsByType(ctx, node, vmid, GuestTypeQEMU); err == nil {
-		return snapshots, nil
-	}
-
-	if snapshots, err := c.snapshotsByType(ctx, node, vmid, GuestTypeLXC); err == nil {
-		return snapshots, nil
-	}
-
-	return nil, fmt.Errorf("guest %d was not found as QEMU VM or LXC container", vmid)
+	return byGuestType(guestNotFound(vmid), func(typ GuestType) ([]Snapshot, error) {
+		return c.snapshotsByType(ctx, node, vmid, typ)
+	})
 }
 
-func (c Client) CreateSnapshot(ctx context.Context, vmid int, name string, description string, vmstate bool) error {
+// CreateSnapshot creates a snapshot and returns the UPID of the task, if any.
+func (c Client) CreateSnapshot(ctx context.Context, vmid int, name string, description string, vmstate bool) (string, error) {
 	node, err := c.nodeName()
 	if err != nil {
-		return err
+		return "", err
 	}
-
-	if err := c.createSnapshotByType(ctx, node, vmid, GuestTypeQEMU, name, description, vmstate); err == nil {
-		return nil
+	typ, err := c.resolveGuestType(ctx, node, vmid)
+	if err != nil {
+		return "", err
 	}
-
-	if err := c.createSnapshotByType(ctx, node, vmid, GuestTypeLXC, name, description, vmstate); err == nil {
-		return nil
+	if vmstate && typ == GuestTypeQEMU && c.hasVirtiofs(ctx, node, vmid) {
+		// Proxmox refuses a snapshot with RAM for a VM with a virtiofs share.
+		vmstate = false
 	}
-
-	return fmt.Errorf("guest %d was not found as QEMU VM or LXC container", vmid)
+	return c.createSnapshotByType(ctx, node, vmid, typ, name, description, vmstate)
 }
 
-func (c Client) DeleteSnapshot(ctx context.Context, vmid int, name string) error {
-	node, err := c.nodeName()
+// hasVirtiofs reports whether the VM config has a virtiofs share. A config that
+// cannot be read counts as "no": the snapshot is then tried as asked and
+// Proxmox says what it thinks.
+func (c Client) hasVirtiofs(ctx context.Context, node string, vmid int) bool {
+	config, err := c.guestConfigByType(ctx, node, vmid, GuestTypeQEMU)
 	if err != nil {
-		return err
+		return false
 	}
-	if err := c.deleteSnapshotByType(ctx, node, vmid, GuestTypeQEMU, name); err == nil {
-		return nil
+	for key := range config {
+		if strings.HasPrefix(key, "virtiofs") {
+			return true
+		}
 	}
-	if err := c.deleteSnapshotByType(ctx, node, vmid, GuestTypeLXC, name); err == nil {
-		return nil
-	}
-	return fmt.Errorf("snapshot %s for guest %d was not found", name, vmid)
+	return false
 }
 
-func (c Client) RollbackSnapshot(ctx context.Context, vmid int, name string) error {
+// DeleteSnapshot deletes a snapshot and returns the UPID of the task, if any.
+func (c Client) DeleteSnapshot(ctx context.Context, vmid int, name string) (string, error) {
 	node, err := c.nodeName()
 	if err != nil {
-		return err
+		return "", err
 	}
-	if err := c.rollbackSnapshotByType(ctx, node, vmid, GuestTypeQEMU, name); err == nil {
-		return nil
+	typ, err := c.resolveGuestType(ctx, node, vmid)
+	if err != nil {
+		return "", err
 	}
-	if err := c.rollbackSnapshotByType(ctx, node, vmid, GuestTypeLXC, name); err == nil {
-		return nil
+	return c.deleteSnapshotByType(ctx, node, vmid, typ, name)
+}
+
+// RollbackSnapshot rolls a guest back to a snapshot and returns the UPID of the task, if any.
+func (c Client) RollbackSnapshot(ctx context.Context, vmid int, name string) (string, error) {
+	node, err := c.nodeName()
+	if err != nil {
+		return "", err
 	}
-	return fmt.Errorf("snapshot %s for guest %d was not found", name, vmid)
+	typ, err := c.resolveGuestType(ctx, node, vmid)
+	if err != nil {
+		return "", err
+	}
+	return c.rollbackSnapshotByType(ctx, node, vmid, typ, name)
 }
 func (c Client) Users(ctx context.Context) ([]User, error) {
 	var users []User
@@ -203,6 +211,9 @@ func (c Client) Users(ctx context.Context) ([]User, error) {
 }
 
 func (c Client) UserTFA(ctx context.Context, userid string) ([]TFAEntry, error) {
+	if err := validate.UserID(userid); err != nil {
+		return nil, err
+	}
 	result, err := c.Runner.Run(ctx, "pvesh", "get", fmt.Sprintf("/access/users/%s/tfa", userid), "--output-format", "json")
 	if err != nil {
 		return nil, fmt.Errorf("unable to list TFA entries for user %s: %w", userid, err)
@@ -217,6 +228,9 @@ func (c Client) UserTFA(ctx context.Context, userid string) ([]TFAEntry, error) 
 }
 
 func (c Client) DisableUserTFA(ctx context.Context, userid string) error {
+	if err := validate.UserID(userid); err != nil {
+		return err
+	}
 	_, err := c.Runner.Run(ctx, "pveum", "user", "tfa", "delete", userid)
 	if err != nil {
 		return fmt.Errorf("unable to disable TFA for user %s: %w", userid, err)
@@ -233,21 +247,6 @@ func (c Client) PackageUpdates(ctx context.Context) ([]PackageUpdate, error) {
 	return parseAptUpdates(result.Stdout), nil
 }
 
-func (c Client) DistUpgrade(ctx context.Context) (string, error) {
-	result, err := c.Runner.Run(ctx, "apt-get", "-y", "dist-upgrade")
-	output := strings.TrimSpace(string(result.Stdout))
-	stderr := strings.TrimSpace(string(result.Stderr))
-	if stderr != "" {
-		if output != "" {
-			output += "\n"
-		}
-		output += stderr
-	}
-	if err != nil {
-		return output, fmt.Errorf("unable to run apt dist-upgrade: %w", err)
-	}
-	return output, nil
-}
 func (c Client) BackupJobs(ctx context.Context) ([]BackupJob, error) {
 	var jobs []BackupJob
 	if err := c.pveshJSON(ctx, &jobs, "get", "/cluster/backup", "--output-format", "json"); err != nil {
@@ -283,40 +282,68 @@ func (c Client) BackupVolumes(ctx context.Context, storages []Storage) ([]Backup
 	return volumes, nil
 }
 
-func (c Client) DeleteBackupVolume(ctx context.Context, volid string) error {
+// DeleteBackupVolume deletes a backup volume and returns the UPID of the task, if any.
+func (c Client) DeleteBackupVolume(ctx context.Context, volid string) (string, error) {
+	if err := validate.VolID(volid); err != nil {
+		return "", err
+	}
 	node, err := c.nodeName()
 	if err != nil {
-		return err
+		return "", err
 	}
 	storage := storageFromVolID(volid)
 	if storage == "" {
-		return fmt.Errorf("invalid backup volume id %q", volid)
+		return "", fmt.Errorf("invalid backup volume id %q", volid)
 	}
 	path := fmt.Sprintf("/nodes/%s/storage/%s/content/%s", node, storage, volid)
-	if _, err := c.Runner.Run(ctx, "pvesh", "delete", path); err != nil {
-		return fmt.Errorf("unable to delete backup %s: %w", volid, err)
+	result, err := c.Runner.Run(ctx, "pvesh", "delete", path)
+	if err != nil {
+		return "", fmt.Errorf("unable to delete backup %s: %w", volid, err)
 	}
-	return nil
+	return parseUPID(result.Stdout), nil
 }
 
+// RestoreBackupVolume restores a backup over its original VMID. It refuses to
+// run while a guest with that VMID is running, because the restore overwrites it.
 func (c Client) RestoreBackupVolume(ctx context.Context, volume BackupVolume) error {
+	if err := validate.VolID(volume.VolID); err != nil {
+		return err
+	}
 	if volume.VMID <= 0 {
 		return fmt.Errorf("backup %s has no VMID", volume.VolID)
 	}
-	command := "qmrestore"
-	if strings.Contains(volume.VolID, "vzdump-lxc-") || strings.Contains(volume.Format, "tar") {
-		command = "pct"
-		_, err := c.Runner.Run(ctx, command, "restore", fmt.Sprintf("%d", volume.VMID), volume.VolID, "--force", "1")
-		if err != nil {
+	// An error here means the guest does not exist (or is unreadable): nothing to overwrite.
+	if guest, err := c.GuestStatus(ctx, volume.VMID); err == nil && guest.Status == "running" {
+		return fmt.Errorf("guest %d is running: stop it before restoring %s", volume.VMID, volume.VolID)
+	}
+
+	vmid := fmt.Sprintf("%d", volume.VMID)
+	if isLXCBackup(volume) {
+		if _, err := c.Runner.Run(ctx, "pct", "restore", vmid, volume.VolID, "--force", "1"); err != nil {
 			return fmt.Errorf("unable to restore backup %s: %w", volume.VolID, err)
 		}
 		return nil
 	}
-	_, err := c.Runner.Run(ctx, command, volume.VolID, fmt.Sprintf("%d", volume.VMID), "--force")
-	if err != nil {
+	if _, err := c.Runner.Run(ctx, "qmrestore", volume.VolID, vmid, "--force"); err != nil {
 		return fmt.Errorf("unable to restore backup %s: %w", volume.VolID, err)
 	}
 	return nil
+}
+
+// isLXCBackup tells container backups from VM backups. The subtype reported by
+// Proxmox wins; volume id and format are only used as a fallback (including
+// Proxmox Backup Server volumes such as "pbs:backup/ct/100/...").
+func isLXCBackup(volume BackupVolume) bool {
+	switch volume.Subtype {
+	case "lxc":
+		return true
+	case "qemu":
+		return false
+	}
+	return strings.Contains(volume.VolID, "vzdump-lxc-") ||
+		strings.Contains(volume.VolID, ":backup/ct/") ||
+		volume.Format == "pbs-ct" ||
+		strings.Contains(volume.Format, "tar")
 }
 
 func storageFromVolID(volid string) string {
@@ -326,10 +353,21 @@ func storageFromVolID(volid string) string {
 	}
 	return storage
 }
-func (c Client) RunBackup(ctx context.Context, vmid int, storage string) error {
+
+// RunBackup starts a vzdump task and returns its UPID. The task keeps running
+// after this call returns: success only means it was accepted.
+func (c Client) RunBackup(ctx context.Context, vmid int, storage string) (string, error) {
+	if vmid <= 0 {
+		return "", fmt.Errorf("invalid VMID %d", vmid)
+	}
+	if storage != "" {
+		if err := validate.StorageName(storage); err != nil {
+			return "", err
+		}
+	}
 	node, err := c.nodeName()
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	args := []string{"create", fmt.Sprintf("/nodes/%s/vzdump", node), "-vmid", fmt.Sprintf("%d", vmid), "-mode", "snapshot"}
@@ -337,13 +375,33 @@ func (c Client) RunBackup(ctx context.Context, vmid int, storage string) error {
 		args = append(args, "-storage", storage)
 	}
 
-	if _, err := c.Runner.Run(ctx, "pvesh", args...); err != nil {
-		return fmt.Errorf("unable to start backup for guest %d: %w", vmid, err)
+	result, err := c.Runner.Run(ctx, "pvesh", args...)
+	if err != nil {
+		return "", fmt.Errorf("unable to start backup for guest %d: %w", vmid, err)
 	}
-	return nil
+	return parseUPID(result.Stdout), nil
 }
 
+// UpdateBackupJob changes the schedule of a backup job. An empty storage or
+// vmids leaves that setting unchanged.
 func (c Client) UpdateBackupJob(ctx context.Context, id string, storage string, schedule string, vmids string) error {
+	if err := validate.StorageName(id); err != nil {
+		return fmt.Errorf("invalid backup job id: %w", err)
+	}
+	if err := validate.Schedule(schedule); err != nil {
+		return err
+	}
+	if storage != "" {
+		if err := validate.StorageName(storage); err != nil {
+			return err
+		}
+	}
+	if vmids != "" {
+		if err := validate.VMIDList(vmids); err != nil {
+			return err
+		}
+	}
+
 	args := []string{"set", fmt.Sprintf("/cluster/backup/%s", id), "-schedule", schedule}
 	if storage != "" {
 		args = append(args, "-storage", storage)
@@ -371,24 +429,25 @@ func (c Client) guestsByType(ctx context.Context, node string, typ GuestType) ([
 	return guests, nil
 }
 
-func (c Client) guestPowerAction(ctx context.Context, vmid int, action string) error {
+func (c Client) guestPowerAction(ctx context.Context, vmid int, action string) (string, error) {
 	node, err := c.nodeName()
 	if err != nil {
-		return err
+		return "", err
 	}
-	if err := c.guestPowerActionByType(ctx, node, vmid, GuestTypeQEMU, action); err == nil {
-		return nil
+	typ, err := c.resolveGuestType(ctx, node, vmid)
+	if err != nil {
+		return "", err
 	}
-	if err := c.guestPowerActionByType(ctx, node, vmid, GuestTypeLXC, action); err == nil {
-		return nil
-	}
-	return fmt.Errorf("guest %d was not found as QEMU VM or LXC container", vmid)
+	return c.guestPowerActionByType(ctx, node, vmid, typ, action)
 }
 
-func (c Client) guestPowerActionByType(ctx context.Context, node string, vmid int, typ GuestType, action string) error {
+func (c Client) guestPowerActionByType(ctx context.Context, node string, vmid int, typ GuestType, action string) (string, error) {
 	path := fmt.Sprintf("/nodes/%s/%s/%d/status/%s", node, pathForGuestType(typ), vmid, action)
-	_, err := c.Runner.Run(ctx, "pvesh", "create", path)
-	return err
+	result, err := c.Runner.Run(ctx, "pvesh", "create", path)
+	if err != nil {
+		return "", err
+	}
+	return parseUPID(result.Stdout), nil
 }
 func (c Client) guestStatusByType(ctx context.Context, node string, vmid int, typ GuestType) (Guest, error) {
 	var guest Guest
@@ -422,7 +481,7 @@ func (c Client) snapshotsByType(ctx context.Context, node string, vmid int, typ 
 	return snapshots, nil
 }
 
-func (c Client) createSnapshotByType(ctx context.Context, node string, vmid int, typ GuestType, name string, description string, vmstate bool) error {
+func (c Client) createSnapshotByType(ctx context.Context, node string, vmid int, typ GuestType, name string, description string, vmstate bool) (string, error) {
 	args := []string{"create", fmt.Sprintf("/nodes/%s/%s/%d/snapshot", node, pathForGuestType(typ), vmid), "-snapname", name}
 	if description != "" {
 		args = append(args, "-description", description)
@@ -431,20 +490,29 @@ func (c Client) createSnapshotByType(ctx context.Context, node string, vmid int,
 		args = append(args, "-vmstate", "1")
 	}
 
-	_, err := c.Runner.Run(ctx, "pvesh", args...)
-	return err
+	result, err := c.Runner.Run(ctx, "pvesh", args...)
+	if err != nil {
+		return "", err
+	}
+	return parseUPID(result.Stdout), nil
 }
 
-func (c Client) deleteSnapshotByType(ctx context.Context, node string, vmid int, typ GuestType, name string) error {
+func (c Client) deleteSnapshotByType(ctx context.Context, node string, vmid int, typ GuestType, name string) (string, error) {
 	path := fmt.Sprintf("/nodes/%s/%s/%d/snapshot/%s", node, pathForGuestType(typ), vmid, name)
-	_, err := c.Runner.Run(ctx, "pvesh", "delete", path)
-	return err
+	result, err := c.Runner.Run(ctx, "pvesh", "delete", path)
+	if err != nil {
+		return "", err
+	}
+	return parseUPID(result.Stdout), nil
 }
 
-func (c Client) rollbackSnapshotByType(ctx context.Context, node string, vmid int, typ GuestType, name string) error {
+func (c Client) rollbackSnapshotByType(ctx context.Context, node string, vmid int, typ GuestType, name string) (string, error) {
 	path := fmt.Sprintf("/nodes/%s/%s/%d/snapshot/%s/rollback", node, pathForGuestType(typ), vmid, name)
-	_, err := c.Runner.Run(ctx, "pvesh", "create", path)
-	return err
+	result, err := c.Runner.Run(ctx, "pvesh", "create", path)
+	if err != nil {
+		return "", err
+	}
+	return parseUPID(result.Stdout), nil
 }
 
 var aptUpdatePattern = regexp.MustCompile(`^([^/]+)/([^ ]+) ([^ ]+) .*\[upgradable from: ([^\]]+)\]`)

@@ -13,6 +13,8 @@ jobs:
   release-linux-amd64:
     name: Build and publish linux/amd64
     runs-on: ubuntu-latest
+    # Releases are only built from main, including manual runs.
+    if: github.ref == 'refs/heads/main'
 
     steps:
       - name: Checkout
@@ -25,6 +27,12 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+
+      - name: Check code
+        run: |
+          test -z "$(gofmt -l .)"
+          go vet ./...
+          go test -race -count=1 ./...
 
       - name: Build pve-console
         env:

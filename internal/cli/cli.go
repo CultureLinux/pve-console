@@ -26,35 +26,70 @@ const usage = `pve-console - Proxmox CLI Manager
 Usage:
   pve-console [global options] <command>
   pve-console
+  pve-console tui [--demo]
   pve-console version
   pve-console status [--json]
   pve-console vm list [--json]
   pve-console vm status <vmid> [--json]
+  pve-console vm start <vmid>
+  pve-console vm stop <vmid> --yes
+  pve-console vm shutdown <vmid> --yes
+  pve-console vm reboot <vmid> --yes
   pve-console storage list [--json]
   pve-console check [--json]
   pve-console snapshot list <vmid> [--json]
   pve-console snapshot create <vmid> [name] [--description text]
+  pve-console snapshot delete <vmid> <name> --yes
+  pve-console snapshot rollback <vmid> <name> --yes
+  pve-console backup list [--json]
+  pve-console backup jobs [--json]
+  pve-console backup run <vmid> [--storage name]
+  pve-console backup delete <volid> --yes
+  pve-console backup restore <volid> --yes
+  pve-console updates list [--json]
+  pve-console updates upgrade --yes
+  pve-console user list [--json]
+  pve-console tfa list <userid> [--json]
+  pve-console tfa disable <userid> --yes
+  pve-console task status <upid> [--json]
 
 Global options:
-  -v, --verbose   Enable verbose output
-  --debug         Enable debug output
+  -v, --verbose     Enable verbose output
+  --debug           Enable debug output
+  --json            Print JSON where supported
+  --timeout <dur>   Timeout per external command, e.g. 90s or 5m (default 30s; longer for slow commands)
+  --wait            Wait for the Proxmox task started by the command and report its result
+  -y, --yes         Confirm a destructive command (required by stop, shutdown, reboot, delete, rollback, restore, upgrade, tfa disable)
 
 Commands:
-  tui            Open interactive terminal UI
+  tui            Open interactive terminal UI (--demo: fake data, no node needed)
   version        Print version information
   status         Print node, guest and storage summary
   vm list        List QEMU VMs and LXC containers
   vm status      Print guest status
   storage list   List Proxmox storages
   check          Run health checks
-  snapshot       List or create snapshots
+  snapshot       List, create, delete or roll back snapshots
+  backup         List backups and jobs, run, delete or restore a backup
+  updates        List package updates or run dist-upgrade
+  user           List users
+  tfa            List or disable a user's TFA entries
+  task           Show the status of a Proxmox task
 `
+
+const defaultTimeout = 30 * time.Second
 
 type Options struct {
 	Verbose bool
 	Debug   bool
 	JSON    bool
+	// Yes confirms destructive commands (--yes).
+	Yes bool
+	// Wait makes commands that start a Proxmox task wait for its end (--wait).
+	Wait    bool
 	Timeout time.Duration
+	// TimeoutSet is true when the timeout was given with --timeout.
+	TimeoutSet bool
 }
 
 func Run(args []string, stdout io.Writer, stderr io.Writer) int {
@@ -63,6 +98,10 @@ func Run(args []string, stdout io.Writer, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%v\n\n", err)
 		fmt.Fprint(stderr, usage)
 		return 2
+	}
+
+	if !opts.TimeoutSet {
+		opts.Timeout = commandTimeout(rest)
 	}
 
 	runner := command.NewExecRunner(opts.Timeout)
@@ -79,7 +118,7 @@ func RunWithOptions(args []string, opts Options, stdout io.Writer, stderr io.Wri
 
 func RunWithClient(args []string, opts Options, client proxmox.Client, stdout io.Writer, stderr io.Writer) int {
 	if len(args) == 0 {
-		return runTUI(client, stderr)
+		return runTUI(client, nil, stderr)
 	}
 
 	ctx := context.Background()
@@ -92,7 +131,7 @@ func RunWithClient(args []string, opts Options, client proxmox.Client, stdout io
 		fmt.Fprintln(stdout, version.String())
 		return 0
 	case "tui":
-		return runTUI(client, stderr)
+		return runTUI(client, args[1:], stderr)
 	case "status":
 		return runStatus(ctx, client, opts, stdout, stderr)
 	case "vm":
@@ -103,6 +142,16 @@ func RunWithClient(args []string, opts Options, client proxmox.Client, stdout io
 		return runCheck(ctx, client, opts, stdout, stderr)
 	case "snapshot":
 		return runSnapshot(ctx, client, args[1:], opts, stdout, stderr)
+	case "backup":
+		return runBackup(ctx, client, args[1:], opts, stdout, stderr)
+	case "updates":
+		return runUpdates(ctx, client, args[1:], opts, stdout, stderr)
+	case "user":
+		return runUser(ctx, client, args[1:], opts, stdout, stderr)
+	case "tfa":
+		return runTFA(ctx, client, args[1:], opts, stdout, stderr)
+	case "task":
+		return runTask(ctx, client, args[1:], opts, stdout, stderr)
 	case "help", "--help", "-h":
 		fmt.Fprint(stdout, usage)
 		return 0
@@ -114,6 +163,10 @@ func RunWithClient(args []string, opts Options, client proxmox.Client, stdout io
 }
 
 func runSnapshot(ctx context.Context, client proxmox.Client, args []string, opts Options, stdout io.Writer, stderr io.Writer) int {
+	if len(args) >= 1 && (args[0] == "delete" || args[0] == "rollback") {
+		return runSnapshotChange(ctx, client, args[0], args[1:], opts, stdout, stderr)
+	}
+
 	if len(args) >= 2 && args[0] == "list" {
 		vmid, err := validate.VMID(args[1])
 		if err != nil {
@@ -154,20 +207,28 @@ func runSnapshot(ctx context.Context, client proxmox.Client, args []string, opts
 			return printError(stderr, "Invalid snapshot options.", err)
 		}
 
-		if err := client.CreateSnapshot(ctx, vmid, name, description, false); err != nil {
+		upid, err := client.CreateSnapshot(ctx, vmid, name, description, false)
+		if err != nil {
 			return printError(stderr, fmt.Sprintf("Unable to create snapshot for guest %d.", vmid), err)
+		}
+		task, code := awaitTask(ctx, client, upid, opts, stderr)
+		if code != 0 {
+			return code
 		}
 
 		if opts.JSON {
 			payload := struct {
-				VMID        int    `json:"vmid"`
-				Name        string `json:"name"`
-				Description string `json:"description,omitempty"`
-			}{VMID: vmid, Name: name, Description: description}
+				VMID        int           `json:"vmid"`
+				Name        string        `json:"name"`
+				Description string        `json:"description,omitempty"`
+				UPID        string        `json:"upid,omitempty"`
+				Task        *proxmox.Task `json:"task,omitempty"`
+			}{VMID: vmid, Name: name, Description: description, UPID: upid, Task: task}
 			return printJSON(stdout, stderr, payload)
 		}
 
 		fmt.Fprintf(stdout, "Snapshot %q created for guest %d\n", name, vmid)
+		printTaskLine(stdout, upid, task)
 		return 0
 	}
 
@@ -175,19 +236,42 @@ func runSnapshot(ctx context.Context, client proxmox.Client, args []string, opts
 	return 2
 }
 
-func runTUI(client proxmox.Client, stderr io.Writer) int {
+// runDemoTUI starts the TUI on fake data (a variable so tests do not open a terminal).
+var runDemoTUI = ui.RunDemo
+
+func runTUI(client proxmox.Client, args []string, stderr io.Writer) int {
+	if len(args) == 1 && args[0] == "--demo" {
+		// Demo mode needs no root, no node and does not write the config file.
+		if err := runDemoTUI(); err != nil {
+			return printError(stderr, "Unable to run the demo TUI.", err)
+		}
+		return 0
+	}
+	if len(args) != 0 {
+		fmt.Fprintf(stderr, "unexpected argument for tui: %s\n\n", strings.Join(args, " "))
+		fmt.Fprint(stderr, usage)
+		return 2
+	}
 	if !isRoot() {
 		fmt.Fprintln(stderr, "Unable to run TUI: pve-console must be run as root.")
 		return 3
 	}
-	_, created, err := config.Ensure(version.Version)
-	if err != nil {
-		return printErrorWithCode(stderr, "Unable to initialize pve-console configuration.", err, 3)
-	}
+	created := initConfig(stderr)
 	if err := ui.Run(client, created); err != nil {
 		return printError(stderr, "Unable to run TUI.", err)
 	}
 	return 0
+}
+
+// initConfig creates the per-user config file on first run. A failure (for
+// example a read-only HOME) is reported as a warning and never blocks the TUI.
+func initConfig(stderr io.Writer) bool {
+	_, created, err := config.Ensure(version.Version)
+	if err != nil {
+		fmt.Fprintf(stderr, "warning: configuration not initialized: %v\n", err)
+		return false
+	}
+	return created
 }
 
 func runCheck(ctx context.Context, client proxmox.Client, opts Options, stdout io.Writer, stderr io.Writer) int {
@@ -208,18 +292,38 @@ func runCheck(ctx context.Context, client proxmox.Client, opts Options, stdout i
 }
 
 func ParseGlobalOptions(args []string) (Options, []string, error) {
-	opts := Options{Timeout: 30 * time.Second}
+	opts := Options{Timeout: defaultTimeout}
 	rest := make([]string, 0, len(args))
 
-	for _, arg := range args {
-		switch arg {
-		case "-v", "--verbose":
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "-v" || arg == "--verbose":
 			opts.Verbose = true
-		case "--debug":
+		case arg == "--debug":
 			opts.Debug = true
 			opts.Verbose = true
-		case "--json":
+		case arg == "--json":
 			opts.JSON = true
+		case arg == "-y" || arg == "--yes":
+			opts.Yes = true
+		case arg == "--wait":
+			opts.Wait = true
+		case arg == "--timeout" || strings.HasPrefix(arg, "--timeout="):
+			value := strings.TrimPrefix(arg, "--timeout=")
+			if arg == "--timeout" {
+				if i+1 >= len(args) {
+					return Options{}, nil, fmt.Errorf("--timeout requires a duration such as 90s or 5m")
+				}
+				i++
+				value = args[i]
+			}
+			timeout, err := time.ParseDuration(value)
+			if err != nil || timeout <= 0 {
+				return Options{}, nil, fmt.Errorf("invalid --timeout %q: expected a positive duration such as 90s or 5m", value)
+			}
+			opts.Timeout = timeout
+			opts.TimeoutSet = true
 		default:
 			rest = append(rest, arg)
 		}
@@ -269,6 +373,10 @@ func runStatus(ctx context.Context, client proxmox.Client, opts Options, stdout 
 }
 
 func runVM(ctx context.Context, client proxmox.Client, args []string, opts Options, stdout io.Writer, stderr io.Writer) int {
+	if len(args) >= 1 && (args[0] == "start" || args[0] == "stop" || args[0] == "reboot" || args[0] == "shutdown") {
+		return runGuestPower(ctx, client, args[0], args[1:], opts, stdout, stderr)
+	}
+
 	if len(args) == 1 && args[0] == "list" {
 		guests, err := client.Guests(ctx)
 		if err != nil {

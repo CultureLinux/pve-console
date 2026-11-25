@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"strings"
+	"sync"
 	"time"
 )
 
@@ -24,6 +26,18 @@ type Runner interface {
 	Run(ctx context.Context, command string, args ...string) (Result, error)
 }
 
+// LineRunner is a Runner that can also report the output of a command line by
+// line while it runs, for the commands the user watches (apt). The standard
+// and error outputs are merged in the order they were written.
+type LineRunner interface {
+	Runner
+	RunLines(ctx context.Context, onLine func(string), command string, args ...string) (Result, error)
+}
+
+// failureTailLines is the number of output lines kept as the error output of a
+// line-by-line command that failed.
+const failureTailLines = 10
+
 type ExecRunner struct {
 	Timeout time.Duration
 }
@@ -37,6 +51,16 @@ func NewExecRunner(timeout time.Duration) ExecRunner {
 }
 
 func (r ExecRunner) Run(ctx context.Context, command string, args ...string) (Result, error) {
+	return r.run(ctx, nil, command, args...)
+}
+
+// RunLines implements LineRunner. onLine is called from the goroutine that
+// copies the output, one call at a time, with the line without its line break.
+func (r ExecRunner) RunLines(ctx context.Context, onLine func(string), command string, args ...string) (Result, error) {
+	return r.run(ctx, onLine, command, args...)
+}
+
+func (r ExecRunner) run(ctx context.Context, onLine func(string), command string, args ...string) (Result, error) {
 	if command == "" {
 		return Result{}, errors.New("command name cannot be empty")
 	}
@@ -55,11 +79,22 @@ func (r ExecRunner) Run(ctx context.Context, command string, args ...string) (Re
 
 	start := time.Now()
 	cmd := exec.CommandContext(runCtx, command, args...)
+	// After the timeout kills the command, a child that still holds the output
+	// pipe (dpkg under apt) must not block the return forever.
+	cmd.WaitDelay = 3 * time.Second
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	var merged *lineWriter
+	if onLine == nil {
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+	} else {
+		// One writer for both outputs: exec shares it, so lines keep their order.
+		merged = &lineWriter{onLine: onLine}
+		cmd.Stdout = merged
+		cmd.Stderr = merged
+	}
 
 	err := cmd.Run()
 	result := Result{
@@ -69,6 +104,13 @@ func (r ExecRunner) Run(ctx context.Context, command string, args ...string) (Re
 		Stderr:   stderr.Bytes(),
 		ExitCode: 0,
 		Duration: time.Since(start),
+	}
+	if merged != nil {
+		merged.flush()
+		result.Stdout = merged.all()
+		if err != nil {
+			result.Stderr = merged.tail(failureTailLines)
+		}
 	}
 
 	if runCtx.Err() == context.DeadlineExceeded {
@@ -109,4 +151,57 @@ func (e CommandError) Error() string {
 
 func (e CommandError) Unwrap() error {
 	return e.Err
+}
+
+// lineWriter splits what a command writes into lines and reports each one. It
+// keeps the whole output too.
+type lineWriter struct {
+	onLine  func(string)
+	mu      sync.Mutex
+	pending []byte
+	output  bytes.Buffer
+}
+
+func (w *lineWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	w.output.Write(p)
+	w.pending = append(w.pending, p...)
+	for {
+		i := bytes.IndexByte(w.pending, '\n')
+		if i < 0 {
+			break
+		}
+		w.onLine(strings.TrimRight(string(w.pending[:i]), "\r"))
+		w.pending = w.pending[i+1:]
+	}
+	return len(p), nil
+}
+
+// flush reports the last line when the command did not end it with a line break.
+func (w *lineWriter) flush() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if len(w.pending) > 0 {
+		w.onLine(strings.TrimRight(string(w.pending), "\r"))
+		w.pending = nil
+	}
+}
+
+func (w *lineWriter) all() []byte {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return append([]byte(nil), w.output.Bytes()...)
+}
+
+// tail returns the last n lines of the output.
+func (w *lineWriter) tail(n int) []byte {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	lines := strings.Split(strings.TrimRight(w.output.String(), "\n"), "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return []byte(strings.Join(lines, "\n"))
 }

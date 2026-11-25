@@ -106,31 +106,43 @@ func TestUserPanelShowsUsers(t *testing.T) {
 	model.data.users = []proxmox.User{{UserID: "root@pam", Enable: true, TFAEnabled: true, Email: "root@example.test"}}
 
 	view := model.userPanel(80, 20)
-	for _, want := range []string{"USERS", "TFA", "root@pam", "true", "root@example.test"} {
+	for _, want := range []string{"Users", "2FA", "root@pam", "root@example.test"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("expected %q in user panel, got %q", want, view)
 		}
 	}
 }
 
-func TestFooterShowsDisableTFAConfirmation(t *testing.T) {
+func TestDisableTFAConfirmationIsADangerModal(t *testing.T) {
 	model := New(proxmox.Client{})
 	model.modalMode = modalNone
+	model.viewMode = viewUsers
+	model.data.users = []proxmox.User{{UserID: "root@pam"}}
 	model.inputMode = inputDisableTFA
 	model.input = "root@pam"
 
-	if got := model.footerText(); !strings.Contains(got, "disable TFA") || !strings.Contains(got, "root@pam") {
+	view := model.inputModal(80)
+	for _, want := range []string{"Disable two-factor", "root@pam", "Type the user id to confirm", "disable TFA"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected %q in the TFA confirmation, got %q", want, view)
+		}
+	}
+	if got := model.footerText(); !strings.Contains(got, "disable TFA") || !strings.Contains(got, "esc cancel") {
 		t.Fatalf("unexpected footer: %q", got)
 	}
 }
 
-func TestFooterShowsSnapshotRAMToggle(t *testing.T) {
+func TestSnapshotModalMentionsTheRAMState(t *testing.T) {
 	model := New(proxmox.Client{})
-	model.modalMode = modalSnapshot
+	model.data.guests = []proxmox.Guest{{VMID: 300, Name: "wp", Type: proxmox.GuestTypeQEMU}, {VMID: 400, Name: "ct", Type: proxmox.GuestTypeLXC}}
+	model.openModal(modalSnapshot, 300, "", "")
+	if view := model.modal(80); !strings.Contains(view, "RAM state") {
+		t.Fatalf("a QEMU snapshot saves the RAM state, got %q", view)
+	}
 
-	got := model.footerText()
-	if !strings.Contains(got, "ram:on") || !strings.Contains(got, "snapshot modal") {
-		t.Fatalf("unexpected footer: %q", got)
+	model.openModal(modalSnapshot, 400, "", "")
+	if view := model.modal(80); strings.Contains(view, "RAM state") {
+		t.Fatalf("a container has no RAM state, got %q", view)
 	}
 }
 
@@ -139,7 +151,7 @@ func TestModalRendersSnapshotActions(t *testing.T) {
 	model.openModal(modalSnapshot, 300, "", "before-upgrade")
 
 	view := model.modal(80)
-	for _, want := range []string{"SNAPSHOT", "VMID 300", "before-upgrade", "Snap", "Annuler"} {
+	for _, want := range []string{"New snapshot", "VMID 300", "before-upgrade", "Create", "Cancel"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("expected %q in modal, got %q", want, view)
 		}
@@ -152,7 +164,7 @@ func TestModalRendersBackupStorageSelect(t *testing.T) {
 	model.openModal(modalBackup, 300, "", model.defaultBackupStorage())
 
 	view := model.modal(80)
-	for _, want := range []string{"BACKUP", "VMID 300", "Storage", "< backup-nas >", "Backup", "Annuler"} {
+	for _, want := range []string{"Run a backup", "VMID 300", "Storage", "‹ backup-nas ›", "Start backup", "Cancel"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("expected %q in modal, got %q", want, view)
 		}
@@ -168,7 +180,7 @@ func TestModalRendersScheduleVMIDs(t *testing.T) {
 	model.modalVMIDs = "300,302"
 
 	view := model.modal(80)
-	for _, want := range []string{"BACKUP SCHEDULE", "Job daily", "Storage", "< backup-nas >", "Schedule", "02:30", "VMIDS", "wp-preprod", "Save"} {
+	for _, want := range []string{"Backup schedule", "job daily", "Storage", "‹ backup-nas ›", "Schedule", "02:30", "GUESTS", "wp-preprod", "Save"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("expected %q in modal, got %q", want, view)
 		}
@@ -179,7 +191,7 @@ func TestStartupModalWarnsExperimentalRootActions(t *testing.T) {
 	model := New(proxmox.Client{})
 
 	view := model.modal(80)
-	for _, want := range []string{"EXPERIMENTAL", "still experimental", "executed as root", "enter continue"} {
+	for _, want := range []string{"experimental", "runs as root", "continue"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("expected %q in startup modal, got %q", want, view)
 		}
@@ -191,7 +203,7 @@ func TestHelpModalRendersCommandsAndCredit(t *testing.T) {
 	model.openModal(modalHelp, 0, "", "")
 
 	view := model.modal(80)
-	for _, want := range []string{"HELP", "Navigation", "Backups", "n              new snapshot", "e              edit schedule and VMIDs", "?, h           open / close help", "dev by @clinux"} {
+	for _, want := range []string{"Help", "NAVIGATION", "BACKUPS", "new snapshot", "edit a job schedule", "stop (forced)", "dev by @clinux"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("expected %q in help modal, got %q", want, view)
 		}
@@ -206,18 +218,18 @@ func TestUpdatesAndBackupsPanels(t *testing.T) {
 	model.data.backupVolumes = []proxmox.BackupVolume{{VMID: 300, VolID: "backup-nas:backup/vzdump-qemu-300.vma.zst", Size: 1024, CTime: 1790413200}}
 
 	updates := model.updatesPanel(100, 20)
-	if !strings.Contains(updates, "APT UPDATES (1)") || !strings.Contains(updates, "libssl3") {
+	if !strings.Contains(updates, "APT updates") || !strings.Contains(updates, "libssl3") {
 		t.Fatalf("unexpected updates panel: %q", updates)
 	}
 
 	backups := model.backupsPanel(100, 20)
-	if !strings.Contains(backups, "BACKUP VOLUMES (1)") || !strings.Contains(backups, "wp-preprod") || !strings.Contains(backups, "2026-") {
+	if !strings.Contains(backups, "Volumes") || !strings.Contains(backups, "wp-preprod") || !strings.Contains(backups, "2026-") {
 		t.Fatalf("unexpected backups panel: %q", backups)
 	}
 
 	model.backupMode = "jobs"
 	jobs := model.backupsPanel(100, 20)
-	if !strings.Contains(jobs, "BACKUP JOBS (1)") || !strings.Contains(jobs, "backup-nas") {
+	if !strings.Contains(jobs, "Jobs") || !strings.Contains(jobs, "backup-nas") || !strings.Contains(jobs, "03:00") {
 		t.Fatalf("unexpected backup jobs panel: %q", jobs)
 	}
 }
@@ -246,13 +258,22 @@ func TestViewCentersModalOverlay(t *testing.T) {
 	model.openModal(modalSnapshot, 300, "", "before-upgrade")
 
 	view := model.View()
-	if !strings.Contains(view, "SNAPSHOT") || !strings.Contains(view, "VMID 300") {
+	if !strings.Contains(view, "New snapshot") || !strings.Contains(view, "VMID 300") {
 		t.Fatalf("expected snapshot modal in view, got %q", view)
 	}
-	if strings.LastIndex(view, "SNAPSHOT") > strings.LastIndex(view, "snapshot modal") {
-		t.Fatalf("expected modal overlay before footer, got %q", view)
+	lines := strings.Split(view, "\n")
+	row := -1
+	for i, line := range lines {
+		if strings.Contains(line, "New snapshot") {
+			row = i
+			break
+		}
+	}
+	if row <= headerRows || row >= len(lines)-footerRows {
+		t.Fatalf("the modal must sit between the header and the footer, found at row %d of %d", row, len(lines))
 	}
 }
+
 func TestEnterOutsideGuestsDoesNotOpenConfig(t *testing.T) {
 	model := NewWithStartup(proxmox.Client{}, false)
 	model.viewMode = viewUpdates
@@ -268,32 +289,39 @@ func TestEnterOutsideGuestsDoesNotOpenConfig(t *testing.T) {
 	}
 }
 
-func TestPanelsShowAsciiLoaderWhileLoading(t *testing.T) {
+func TestPanelsShowALoaderWhileLoading(t *testing.T) {
 	model := NewWithStartup(proxmox.Client{}, false)
 	model.loading = true
 	model.viewMode = viewUpdates
 
 	view := model.updatesPanel(80, 20)
-	if !strings.Contains(view, "checking apt") || !strings.Contains(view, "tamapve") {
-		t.Fatalf("expected ascii loader, got %q", view)
+	if !strings.Contains(view, "checking apt") {
+		t.Fatalf("expected a loader, got %q", view)
 	}
 }
 
-func TestLoadingPetFramesAreDiscreetAscii(t *testing.T) {
-	view := loadingPet("checking apt", 3)
-	for _, want := range []string{"+---+", "(^_^)", "checking apt", "tamapve"} {
-		if !strings.Contains(view, want) {
-			t.Fatalf("expected %q in loading pet, got %q", want, view)
+func TestLoaderKeepsTheProjectsLittleFace(t *testing.T) {
+	for frame, want := range []string{"(o_o)", "(O_o)", "(o_O)", "(^_^)", "(o_o)"} {
+		if got := petFace(frame); got != want {
+			t.Fatalf("petFace(%d) = %q, want %q", frame, got, want)
 		}
 	}
+	if got := petFace(-3); got != "(o_o)" {
+		t.Fatalf("a negative frame must not panic, got %q", got)
+	}
+	if view := stripANSI(loading("checking apt")); !strings.Contains(view, "checking apt") {
+		t.Fatalf("unexpected loader %q", view)
+	}
 }
+
 func TestUpgradeModalShowsOutput(t *testing.T) {
 	model := NewWithStartup(proxmox.Client{}, false)
 	model.modalMode = modalUpgrade
+	model.upgradePhase = upgradeApply
 	model.upgradeOutput = "Preparing packages\nDone"
 
 	view := model.modal(100)
-	for _, want := range []string{"APT DIST-UPGRADE", "Preparing packages", "Done", "enter/esc close"} {
+	for _, want := range []string{"Upgrade", "apt dist-upgrade", "Preparing packages", "Done", "close"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("expected %q in upgrade modal, got %q", want, view)
 		}

@@ -17,7 +17,9 @@ func TestRunReturnsWarnForStorageWarning(t *testing.T) {
 			"pvesh get /nodes/pve/qemu --output-format json":    {Stdout: []byte(`[{"vmid":300,"name":"vm","status":"running"}]`)},
 			"pvesh get /nodes/pve/lxc --output-format json":     {Stdout: []byte(`[]`)},
 			"pvesh get /nodes/pve/storage --output-format json": {Stdout: []byte(`[{"storage":"local","type":"dir","used":85,"total":100,"active":true}]`)},
+			"cat /proc/mdstat": {},
 		},
+		Missing: []string{"smartctl", "zpool", "lvs", "vgs"},
 	}, Node: "pve"}
 
 	report, err := Run(context.Background(), client, DefaultOptions())
@@ -26,6 +28,11 @@ func TestRunReturnsWarnForStorageWarning(t *testing.T) {
 	}
 	if report.Status != StatusWarn {
 		t.Fatalf("expected warn status, got %s", report.Status)
+	}
+	for _, check := range report.Checks {
+		if check.Status == StatusWarn && check.Name != "storage-local" {
+			t.Fatalf("only the storage should warn, got %+v", check)
+		}
 	}
 	if ExitCode(report.Status) != 1 {
 		t.Fatalf("expected exit code 1, got %d", ExitCode(report.Status))

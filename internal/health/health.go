@@ -89,6 +89,11 @@ func Run(ctx context.Context, client proxmox.Client, opts Options) (Report, erro
 		report.Checks = append(report.Checks, checkStorages(storages, opts)...)
 	}
 
+	report.Checks = append(report.Checks, CheckHardware(ctx, client.Runner, HardwareOptions{
+		Warning:  opts.StorageWarning,
+		Critical: opts.StorageCritical,
+	})...)
+
 	report.Status = WorstStatus(report.Checks)
 	return report, nil
 }
