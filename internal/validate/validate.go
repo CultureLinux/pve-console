@@ -14,6 +14,7 @@ var (
 	schedulePattern     = regexp.MustCompile(`^[A-Za-z0-9*][A-Za-z0-9 :,*/.-]{0,99}$`)
 	volIDPattern        = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}:[A-Za-z0-9][A-Za-z0-9_./:+-]{0,299}$`)
 	upidPattern         = regexp.MustCompile(`^UPID:[A-Za-z0-9][A-Za-z0-9.-]{0,63}:[0-9A-Fa-f]{8}:[0-9A-Fa-f]{8}:[0-9A-Fa-f]{8}:[A-Za-z0-9_-]{1,32}:[A-Za-z0-9_./:-]{0,100}:[A-Za-z0-9_.@!-]{1,64}:$`)
+	tokenIDPattern      = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9._-]{1,63}$`)
 	userIDPattern       = regexp.MustCompile(`^[^\s:/@-][^\s:/@]{0,63}@[A-Za-z][A-Za-z0-9._-]{0,31}$`)
 )
 
@@ -84,6 +85,16 @@ func VolID(volid string) error {
 func UserID(userid string) error {
 	if !userIDPattern.MatchString(userid) {
 		return fmt.Errorf("invalid user id %q: expected name@realm", userid)
+	}
+
+	return nil
+}
+
+// TokenID checks the name of an API token (the part after "!" in
+// "user@realm!name"). It is used in API paths, so anything else is refused.
+func TokenID(tokenid string) error {
+	if !tokenIDPattern.MatchString(tokenid) {
+		return fmt.Errorf("invalid token id %q: expected 2 to 64 characters, a letter first, then letters, digits, \".\", \"-\" or \"_\"", tokenid)
 	}
 
 	return nil

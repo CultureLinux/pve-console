@@ -430,3 +430,17 @@ func wrapText(text string, width int) []string {
 	}
 	return lines
 }
+
+// scrollWindow returns the lines of a panel body that fit in rows, starting at
+// offset (clamped), the offset actually used, and a "a-b of n" mark for the
+// title, empty when everything fits.
+func scrollWindow(lines []string, rows int, offset int) ([]string, int, string) {
+	offset = max(0, min(offset, len(lines)-rows))
+	if len(lines) <= rows {
+		return lines, 0, ""
+	}
+	end := min(len(lines), offset+rows)
+	mark := styleMuted.Render(fmt.Sprintf("%d-%d of %d", offset+1, end, len(lines)))
+
+	return lines[offset:end], offset, mark
+}

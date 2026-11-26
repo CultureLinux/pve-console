@@ -167,6 +167,13 @@ func (m *Model) moveSelection(delta int) {
 		}
 		return
 	}
+	if m.viewMode == viewTokens {
+		next := m.selectedToken + delta
+		if next >= 0 && next < len(m.filteredTokens()) {
+			m.selectedToken = next
+		}
+		return
+	}
 	if m.viewMode == viewLog {
 		next := m.selectedLog + delta
 		if next >= 0 && next < len(m.filteredLog()) {
@@ -192,6 +199,8 @@ func (m *Model) resetActiveSelection() {
 	switch m.viewMode {
 	case viewUsers:
 		m.selectedUser = 0
+	case viewTokens:
+		m.selectedToken = 0
 	case viewBackups:
 		m.selectedBackup = 0
 	case viewLog:
@@ -205,6 +214,7 @@ func (m *Model) resetActiveSelection() {
 func (m *Model) clampSelections() {
 	m.selected = clampIndex(m.selected, len(m.filteredGuests()))
 	m.selectedUser = clampIndex(m.selectedUser, len(m.filteredUsers()))
+	m.selectedToken = clampIndex(m.selectedToken, len(m.filteredTokens()))
 	m.selectedBackup = clampIndex(m.selectedBackup, m.backupItemCount())
 	m.selectedLog = clampIndex(m.selectedLog, len(m.filteredLog()))
 }
@@ -217,6 +227,28 @@ func clampIndex(index int, count int) int {
 		return count - 1
 	}
 	return index
+}
+
+func (m Model) filteredTokens() []proxmox.Token {
+	query := normalizedQuery(m.query)
+	if query == "" {
+		return m.data.tokens
+	}
+	tokens := make([]proxmox.Token, 0, len(m.data.tokens))
+	for _, token := range m.data.tokens {
+		if containsAnyFold([]string{token.FullID(), token.Comment}, query) {
+			tokens = append(tokens, token)
+		}
+	}
+	return tokens
+}
+
+func (m Model) selectedTokenModel() (proxmox.Token, bool) {
+	tokens := m.filteredTokens()
+	if len(tokens) == 0 || m.selectedToken >= len(tokens) {
+		return proxmox.Token{}, false
+	}
+	return tokens[m.selectedToken], true
 }
 
 func (m Model) selectedUserModel() (proxmox.User, bool) {

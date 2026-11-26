@@ -84,6 +84,8 @@ func (m Model) detailPanel(width int, height int) string {
 	switch m.viewMode {
 	case viewUsers:
 		return m.userDetailPanel(width, height)
+	case viewTokens:
+		return m.tokenDetailPanel(width, height)
 	case viewUpdates:
 		return m.updatesDetailPanel(width, height)
 	case viewBackups:
@@ -182,19 +184,7 @@ func (m Model) configPanel(width int, height int) string {
 		lines = lines[:n-1]
 	}
 
-	rows := panelRows(height)
-	offset := m.configScroll
-	if offset > len(lines)-rows {
-		offset = len(lines) - rows
-	}
-	if offset < 0 {
-		offset = 0
-	}
-	meta := ""
-	if len(lines) > rows {
-		meta = styleMuted.Render(fmt.Sprintf("%d-%d of %d", offset+1, min(len(lines), offset+rows), len(lines)))
-		lines = lines[offset:min(len(lines), offset+rows)]
-	}
+	lines, _, meta := scrollWindow(lines, panelRows(height), m.configScroll)
 	return panel(title, meta, lines, width, height, true)
 }
 

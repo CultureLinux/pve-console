@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"strings"
+	"time"
 )
 
 func (m Model) userPanel(width int, height int) string {
@@ -100,5 +101,57 @@ func (m Model) userDetailPanel(width int, height int) string {
 		}
 	}
 
+	lines = append(lines, m.userTokenLines(inner)...)
+
 	return panel(title, "", lines, width, height, false)
+}
+
+// userTokenLines lists the API tokens of the selected user: name, expiry and
+// comment. Their roles are in the Tokens view.
+func (m Model) userTokenLines(inner int) []string {
+	user, ok := m.selectedUserModel()
+	if !ok {
+		return nil
+	}
+	lines := []string{"", styleSection.Render("API TOKENS")}
+	if !m.data.tokensRead {
+		return append(lines, loading("reading tokens"))
+	}
+	now := time.Now()
+	found := false
+	const expiryW = 10
+	idW := 0
+	for _, token := range m.data.tokens {
+		if token.UserID == user.UserID {
+			idW = max(idW, textWidth(token.ID))
+		}
+	}
+	idW = max(8, min(idW, inner-2-expiryW-1))
+	for _, token := range m.data.tokens {
+		if token.UserID != user.UserID {
+			continue
+		}
+		found = true
+		expiry, warn := tokenExpiryLabel(token, now)
+		expiryStyle := styleMuted
+		switch {
+		case token.Expired(now):
+			expiryStyle = styleDanger
+		case warn:
+			expiryStyle = styleWarn
+		}
+		line := tokenDotStyle(token, now).Render(glyphDotOn) + " " + col(ellipsis(token.ID, idW), idW) + " " + expiryStyle.Render(col(expiry, expiryW))
+		if room := inner - 2 - idW - 1 - expiryW - 1; token.Comment != "" && room > 3 {
+			line += " " + styleMuted.Render(ellipsis(token.Comment, room))
+		}
+		lines = append(lines, line)
+	}
+	if !found {
+		if m.data.tokenErr != nil && len(m.data.tokens) == 0 {
+			return append(lines, styleDanger.Render(ellipsis(firstLine(m.data.tokenErr.Error()), inner)))
+		}
+		lines = append(lines, styleMuted.Render("None for "+user.UserID+"."))
+	}
+
+	return lines
 }

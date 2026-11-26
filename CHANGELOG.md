@@ -2,6 +2,19 @@
 
 Notable changes of pve-console, by release. The entries are the summaries of the commits.
 
+## v0.2.4 - 2026-11-26
+
+### Features
+
+- Ajoute l'onglet Tokens (liste des jetons d'API)
+
+### User experience
+
+- Liste les jetons d'un utilisateur dans la vue User
+- Focus et défilement du panneau de détail (onglet Tokens)
+- Affiche rôles et privilèges effectifs d'un jeto
+
+
 ## v0.2.3 - 2026-11-25
 
 ### Features

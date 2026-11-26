@@ -212,3 +212,32 @@ func TestUPID(t *testing.T) {
 		})
 	}
 }
+
+func TestTokenID(t *testing.T) {
+	tests := []struct {
+		id      string
+		wantErr bool
+	}{
+		{id: "grafana"},
+		{id: "opentofu-ci_1.a"},
+		{id: "ab"},
+		{id: "", wantErr: true},
+		{id: "a", wantErr: true},
+		{id: "1abc", wantErr: true},
+		{id: "-abc", wantErr: true},
+		{id: "a b", wantErr: true},
+		{id: "a/b", wantErr: true},
+		{id: "a!b", wantErr: true},
+		{id: "a=b", wantErr: true},
+		{id: "../x", wantErr: true},
+		{id: strings.Repeat("a", 65), wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.id, func(t *testing.T) {
+			err := TokenID(tt.id)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("TokenID(%q) = %v, wantErr %v", tt.id, err, tt.wantErr)
+			}
+		})
+	}
+}

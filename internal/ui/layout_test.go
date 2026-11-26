@@ -27,6 +27,11 @@ func richModel() Model {
 	}
 	m.data.updates = []proxmox.PackageUpdate{{Name: "libssl3", Current: "3.0.1", Candidate: "3.0.2"}}
 	m.data.users = []proxmox.User{{UserID: "root@pam", Enable: true, TFAEnabled: true, Email: "root@example.test", Comment: "the administrator account of this node"}}
+	m.data.tokens = []proxmox.Token{
+		{UserID: "root@pam", ID: "grafana", Comment: "Grafana: metrics", PrivSep: true},
+		{UserID: "alice@pve", ID: "a-token-with-a-rather-long-name-indeed", Comment: "a comment that is far too long to fit in its column", Expire: 1000},
+	}
+	m.data.acls = []proxmox.ACLEntry{{Path: "/", RoleID: "PVEAuditor", Type: "token", UGID: "root@pam!grafana", Propagate: true}}
 	m.data.backups = []proxmox.BackupJob{{ID: "daily", Storage: "backup-nas", Schedule: "02:30", Enabled: true, VMID: "100,101,102,200,201,202,203"}}
 	m.data.backupVolumes = []proxmox.BackupVolume{{VMID: 100, VolID: "backup-nas:backup/vzdump-qemu-100-2026_01_01-02_30_00.vma.zst", Size: 3 << 30, CTime: 1700000000, Format: "vma.zst"}}
 	m.snapshots = []proxmox.Snapshot{{Name: "before-upgrade", SnapTime: 1700000000}, {Name: "current"}}
@@ -56,6 +61,13 @@ func screens() []screen {
 		{"config error", func(m *Model) { m.showConfig, m.config, m.configErr = true, nil, fmt.Errorf("denied") }},
 		{"config loading", func(m *Model) { m.showConfig, m.config = true, nil }},
 		{"users", func(m *Model) { m.viewMode = viewUsers }},
+		{"tokens", func(m *Model) { m.viewMode = viewTokens }},
+		{"tokens second", func(m *Model) { m.viewMode, m.selectedToken = viewTokens, 1 }},
+		{"tokens loading", func(m *Model) { m.viewMode, m.data.tokens, m.loading = viewTokens, nil, true }},
+		{"tokens empty", func(m *Model) { m.viewMode, m.data.tokens = viewTokens, nil }},
+		{"tokens error", func(m *Model) {
+			m.viewMode, m.data.tokens, m.data.tokenErr = viewTokens, nil, fmt.Errorf("pvesh failed: %s", strings.Repeat("boom ", 40))
+		}},
 		{"updates", func(m *Model) { m.viewMode = viewUpdates }},
 		{"updates up to date", func(m *Model) { m.viewMode, m.data.updates = viewUpdates, nil }},
 		{"backups volumes", func(m *Model) { m.viewMode = viewBackups }},

@@ -272,6 +272,12 @@ func (r *demoRunner) get(path string, parts []string, args []string) (command.Re
 			{"userid": "alice@pve", "enable": 1, "email": "alice@example.test", "firstname": "Alice", "lastname": "Martin"},
 			{"userid": "backup@pve", "enable": 0, "comment": "service account"},
 		})
+	case len(parts) == 4 && parts[0] == "access" && parts[1] == "users" && parts[3] == "token":
+		return demoJSON(demoTokens(parts[2]))
+	case path == "/access/permissions":
+		return demoJSON(demoPermissions(option(args, "-userid")))
+	case path == "/access/acl":
+		return demoJSON(demoACLs())
 	case len(parts) == 3 && parts[0] == "access" && parts[1] == "tfa" && parts[2] != "":
 		entries := []map[string]any{}
 		if parts[2] == "root@pam" {
@@ -525,4 +531,48 @@ func (demoUpdater) Install(ctx context.Context, info update.Info, progress func(
 		Previous: "/usr/local/sbin/pve-console.prev",
 		Version:  "pve-console " + strings.TrimPrefix(info.Tag, "v") + " (demo)",
 	}, nil
+}
+
+// demoTokens lists the API tokens of a user: Grafana reads the metrics and
+// OpenTofu manages the VMs.
+func demoTokens(userid string) []map[string]any {
+	switch userid {
+	case "backup@pve":
+		return []map[string]any{
+			{"tokenid": "grafana", "comment": "Grafana: metrics", "privsep": 1, "expire": 0},
+			{"tokenid": "old-exporter", "comment": "replaced by grafana", "privsep": 1, "expire": time.Now().Add(-48 * time.Hour).Unix()},
+		}
+	case "alice@pve":
+		return []map[string]any{
+			{"tokenid": "opentofu", "comment": "OpenTofu: VM management", "privsep": 1, "expire": time.Now().Add(9 * 24 * time.Hour).Unix()},
+			{"tokenid": "scratch", "comment": "tests", "privsep": 0, "expire": 0},
+		}
+	}
+	return []map[string]any{}
+}
+
+func demoACLs() []map[string]any {
+	return []map[string]any{
+		{"path": "/", "roleid": "Administrator", "type": "user", "ugid": "root@pam", "propagate": 1},
+		{"path": "/", "roleid": "PVEAuditor", "type": "user", "ugid": "alice@pve", "propagate": 1},
+		{"path": "/", "roleid": "PVEAuditor", "type": "token", "ugid": "backup@pve!grafana", "propagate": 1},
+		{"path": "/vms", "roleid": "PVEVMAdmin", "type": "token", "ugid": "alice@pve!opentofu", "propagate": 1},
+		{"path": "/storage/local-lvm", "roleid": "PVEDatastoreUser", "type": "token", "ugid": "alice@pve!opentofu", "propagate": 0},
+	}
+}
+
+// demoPermissions are the privileges Proxmox computes for a token.
+func demoPermissions(userid string) map[string]map[string]int {
+	switch userid {
+	case "backup@pve!grafana":
+		return map[string]map[string]int{"/": {"Datastore.Audit": 1, "Pool.Audit": 1, "SDN.Audit": 1, "Sys.Audit": 1, "VM.Audit": 1}}
+	case "alice@pve!opentofu":
+		return map[string]map[string]int{
+			"/vms":               {"VM.Allocate": 1, "VM.Audit": 1, "VM.Clone": 1, "VM.Config.CPU": 1, "VM.Config.Disk": 1, "VM.Config.Memory": 1, "VM.Config.Network": 1, "VM.PowerMgmt": 1},
+			"/storage/local-lvm": {"Datastore.AllocateSpace": 1, "Datastore.Audit": 1},
+		}
+	case "alice@pve!scratch":
+		return map[string]map[string]int{"/": {"Sys.Audit": 1, "VM.Audit": 1}}
+	}
+	return map[string]map[string]int{}
 }

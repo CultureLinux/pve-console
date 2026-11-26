@@ -296,6 +296,11 @@ var helpSections = []helpSection{
 		{"f", "errors / successes"},
 		{"x", "clear the log"},
 	}},
+	{"TOKENS", [][2]string{
+		{"T", "API tokens"},
+		{"enter", "focus the details, scroll"},
+		{"esc", "back to the list"},
+	}},
 	{"USERS AND UPDATES", [][2]string{
 		{"s", "show TFA entries"},
 		{"n", "enroll a TOTP (QR code)"},

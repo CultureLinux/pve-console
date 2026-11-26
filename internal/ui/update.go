@@ -50,7 +50,14 @@ func (m Model) updateKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.inputMode != inputNone {
 		return m.updateInputKey(msg)
 	}
-	return m.updateMainKey(msg)
+	if m.detailFocus && m.hasScrollableDetail() && m.updateDetailKey(msg) {
+		return m, nil
+	}
+	next, cmd := m.updateMainKey(msg)
+	if model, ok := next.(Model); ok {
+		next = model.keepFocusConsistent(m)
+	}
+	return next, cmd
 }
 
 // updateModalKey handles key presses while a modal is open.
@@ -209,8 +216,14 @@ func (m Model) updateMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, tea.Quit
-	case "enter":
+	case "enter", "right":
 		if m.viewMode != viewGuests {
+			if m.hasScrollableDetail() {
+				m.detailFocus = true
+			}
+			return m, nil
+		}
+		if msg.String() == "right" {
 			return m, nil
 		}
 		guest, ok := m.selectedGuest()
@@ -229,9 +242,24 @@ func (m Model) updateMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.message = ""
 	case "u":
 		m.toggleView()
-		if m.viewMode == viewUsers && len(m.data.users) == 0 {
+		if m.viewMode == viewUsers {
+			// Reading the users reads their tokens too.
+			switch {
+			case len(m.data.users) == 0:
+				m.loading = true
+				return m, m.loadUsers
+			case !m.data.tokensRead:
+				m.loading = true
+				return m, m.loadTokens
+			}
+		}
+	case "T":
+		m.viewMode = viewTokens
+		m.showConfig = false
+		m.message = "API tokens"
+		if len(m.data.tokens) == 0 {
 			m.loading = true
-			return m, m.loadUsers
+			return m, m.loadTokens
 		}
 	case "L":
 		m.viewMode = viewLog
@@ -339,6 +367,9 @@ func (m Model) updateMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.viewMode == viewUpdates {
 			return m, m.loadUpdates
 		}
+		if m.viewMode == viewTokens {
+			return m, m.loadTokens
+		}
 		if m.viewMode == viewBackups {
 			return m, m.loadBackups
 		}
@@ -430,6 +461,18 @@ func (m Model) updateMainKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+// applyTokens keeps the tokens that were read, and logs a failure quietly: the
+// views that show tokens say it themselves.
+func (m Model) applyTokens(msg tokensMsg) Model {
+	m.data.tokens, m.data.acls, m.data.tokenPerms, m.data.tokenErr = msg.tokens, msg.acls, msg.perms, msg.err
+	m.data.tokensRead = true
+	if msg.err != nil {
+		m = m.logErrorQuiet("list tokens", msg.err)
+	}
+
+	return m
 }
 
 // updateResult applies the result of an asynchronous command to the model.
@@ -577,10 +620,16 @@ func (m Model) updateResult(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case usersMsg:
 		m.loading = false
 		m.data.users = msg.users
-		m.clampSelections()
 		if msg.err != nil {
 			m = m.logError("list users", msg.err)
+		} else {
+			m = m.applyTokens(msg.tokens)
 		}
+		m.clampSelections()
+	case tokensMsg:
+		m.loading = false
+		m = m.applyTokens(msg)
+		m.clampSelections()
 	case updatesMsg:
 		m.loading = false
 		m.data.updates = msg.updates

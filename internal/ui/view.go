@@ -60,18 +60,30 @@ func (m Model) body(width int, height int) string {
 		// task ids): list above, detail below, both at full width.
 		return m.logStacked(width, height)
 	}
-	if width < detailMinWidth {
+	leftWidth, rightWidth, split := splitWidths(width)
+	if !split {
 		return m.leftPanel(width, height)
 	}
-	leftWidth := width * 58 / 100
-	rightWidth := width - leftWidth - 1
 	return lipgloss.JoinHorizontal(lipgloss.Top, m.leftPanel(leftWidth, height), " ", m.detailPanel(rightWidth, height))
+}
+
+// splitWidths returns the widths of the list and of the detail panel, and false
+// when the screen is too narrow to show the detail next to the list.
+func splitWidths(width int) (left int, right int, ok bool) {
+	if width < detailMinWidth {
+		return width, 0, false
+	}
+	left = width * 58 / 100
+
+	return left, width - left - 1, true
 }
 
 func (m Model) leftPanel(width int, height int) string {
 	switch m.viewMode {
 	case viewUsers:
 		return m.userPanel(width, height)
+	case viewTokens:
+		return m.tokenPanel(width, height)
 	case viewUpdates:
 		return m.updatesPanel(width, height)
 	case viewBackups:
@@ -101,6 +113,7 @@ func (m Model) tabs() []tab {
 		{"g", "Guests", viewGuests, count(len(m.data.guests))},
 		{"b", "Backups", viewBackups, count(len(m.data.backupVolumes))},
 		{"u", "Users", viewUsers, count(len(m.data.users))},
+		{"T", "Tokens", viewTokens, count(len(m.data.tokens))},
 		{"p", "Updates", viewUpdates, count(len(m.data.updates))},
 		{"L", "Log", viewLog, count(len(m.entries))},
 	}
@@ -377,6 +390,11 @@ func (m Model) baseHints() ([]hint, []hint) {
 	}
 
 	switch m.viewMode {
+	case viewTokens:
+		if m.detailFocus {
+			return []hint{{"↑↓", "scroll"}, {"pgup/pgdn", "page"}, {"esc", "back to list"}}, tailHints
+		}
+		return []hint{{"↑↓", "move"}, {"enter", "scroll details"}, {"/", "search"}, {"r", "refresh"}}, tailHints
 	case viewUsers:
 		return []hint{{"↑↓", "move"}, {"s", "show TFA"}, {"n", "enroll TOTP"}, {"P", "password"}, {"x", "disable TFA"}, {"/", "search"}, {"r", "refresh"}}, tailHints
 	case viewUpdates:

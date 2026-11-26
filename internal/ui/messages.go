@@ -71,6 +71,18 @@ type disableTFAMsg struct {
 
 type usersMsg struct {
 	users []proxmox.User
+	// tokens are the API tokens of these users, shown in their detail.
+	tokens tokensMsg
+	err    error
+}
+
+// tokensMsg is the answer to the read of the API tokens and their permissions.
+// A partial read comes with an error: what was read is kept.
+type tokensMsg struct {
+	tokens []proxmox.Token
+	acls   []proxmox.ACLEntry
+	// perms holds the privileges of each token, by full token id then path.
+	perms map[string]map[string][]string
 	err   error
 }
 

@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -83,7 +84,40 @@ func (m Model) loadUsers() tea.Msg {
 			users[i].TFAEnabled = true
 		}
 	}
-	return usersMsg{users: users}
+	return usersMsg{users: users, tokens: m.readTokens(ctx, users)}
+}
+
+// loadTokens reads the API tokens of every user, and the permissions that go
+// with them. The users are read first when the Users view was not opened yet.
+func (m Model) loadTokens() tea.Msg {
+	ctx, cancel := context.WithTimeout(context.Background(), readTimeout)
+	defer cancel()
+	users := m.data.users
+	if len(users) == 0 {
+		var err error
+		if users, err = m.client.Users(ctx); err != nil {
+			return tokensMsg{err: err}
+		}
+	}
+	return m.readTokens(ctx, users)
+}
+
+// readTokens reads the tokens of the given users, their permissions, and the
+// privileges of each token. What was read is returned even when a part failed.
+func (m Model) readTokens(ctx context.Context, users []proxmox.User) tokensMsg {
+	tokens, err := m.client.Tokens(ctx, users)
+	acls, aclErr := m.client.ACLs(ctx)
+	errs := []error{err, aclErr}
+	perms := make(map[string]map[string][]string, len(tokens))
+	for _, token := range tokens {
+		permissions, permErr := m.client.TokenPermissions(ctx, token)
+		if permErr != nil {
+			errs = append(errs, permErr)
+			continue
+		}
+		perms[token.FullID()] = permissions
+	}
+	return tokensMsg{tokens: tokens, acls: acls, perms: perms, err: errors.Join(errs...)}
 }
 
 func (m Model) loadUpdates() tea.Msg {

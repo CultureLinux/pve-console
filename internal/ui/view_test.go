@@ -54,7 +54,7 @@ func TestHeaderTabsFollowTheCurrentView(t *testing.T) {
 			}
 		}
 	}
-	if len(m.tabs()) != 5 {
+	if len(m.tabs()) != 6 {
 		t.Fatalf("%d tabs", len(m.tabs()))
 	}
 }

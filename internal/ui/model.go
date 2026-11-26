@@ -8,10 +8,17 @@ import (
 )
 
 type snapshot struct {
-	node          proxmox.NodeInfo
-	guests        []proxmox.Guest
-	storages      []proxmox.Storage
-	users         []proxmox.User
+	node       proxmox.NodeInfo
+	guests     []proxmox.Guest
+	storages   []proxmox.Storage
+	users      []proxmox.User
+	tokens     []proxmox.Token
+	acls       []proxmox.ACLEntry
+	tokenPerms map[string]map[string][]string
+	tokenErr   error
+	// tokensRead is true once the tokens were read (even with an error): the
+	// Users view shows them too, and reads them when the Tokens view did not.
+	tokensRead    bool
 	updates       []proxmox.PackageUpdate
 	backups       []proxmox.BackupJob
 	backupVolumes []proxmox.BackupVolume
@@ -40,6 +47,7 @@ const (
 	modalPasswd   modalMode = "passwd"
 	viewGuests    string    = "guests"
 	viewUsers     string    = "users"
+	viewTokens    string    = "tokens"
 	viewLog       string    = "log"
 	viewUpdates   string    = "updates"
 	viewBackups   string    = "backups"
@@ -47,11 +55,16 @@ const (
 
 // Model is the Bubble Tea model of the interactive terminal UI.
 type Model struct {
-	client           proxmox.Client
-	width            int
-	height           int
-	selected         int
-	selectedUser     int
+	client        proxmox.Client
+	width         int
+	height        int
+	selected      int
+	selectedUser  int
+	selectedToken int
+	// detailFocus is true when the arrow keys scroll the detail panel instead of
+	// moving the selection of the list; detailScroll is the first visible line.
+	detailFocus      bool
+	detailScroll     int
 	selectedBackup   int
 	selectedSnapshot int
 	loading          bool

@@ -209,6 +209,7 @@ Exit codes: `0` OK or INFO only · `1` WARN · `2` FAIL · `3` internal error. T
 | Snapshots | `↑` `↓` select · `d` delete · `o` roll back · `n` new |
 | Backups | `d` delete a volume · `o` restore it · `m` run a backup · `e` edit a job (schedule, storage, guests) · `tab` volumes / jobs |
 | Users | `s` show two-factor entries · `n` enroll a TOTP (QR code, then `c` for recovery codes) · `P` change the password · `x` disable them (`enter` to confirm) |
+| Tokens | `T` open · `enter` or `→` give the focus to the details (the border turns blue; `↑` `↓` `pgup` `pgdn` `home` `end` scroll) · `esc` or `←` back to the list |
 | Updates | `a` guided upgrade · `r` refresh |
 | Log | `tab` source · `f` outcome (all, errors, success) · `/` search · `x` clear |
 
